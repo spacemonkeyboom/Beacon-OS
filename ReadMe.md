@@ -1,4 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
+<p align="center"><img src="data/artwork/beacon/beacon_wordmark.png" alt="Beacon" width="420"></p>
+
 # Beacon
 
 **Beacon** brings the BeOS ecosystem to as many platforms as possible:
