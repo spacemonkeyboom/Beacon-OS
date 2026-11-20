@@ -1,0 +1,9 @@
+Generate ONE image with your image generation tool and save it in this folder as beacon_logo_sheet.png. Do not run any other commands, do not read or change any other files, do not use the network for anything else.
+
+Image: aspect ratio 16:9, flat vector logo artwork on a plain pure white background. No gradients, no shadows, no 3D, no texture, no mockups, no extra words.
+
+Top two thirds, centered: the wordmark "Beacon" (exactly this spelling, one word). Bold classic 1990s computer-company serif lettering, in the spirit of the old BeOS wordmark but original. The letters "Be" are royal blue (#0050FF). The letters "acon" are bright red (#FF0000). Directly under the word is a thick horizontal underline in two parts: a royal blue bar under "Be" and a bright red bar under "acon", touching end to end, same thickness.
+
+Bottom third, centered, smaller: a simple square app icon: white rounded square containing a bold blue serif capital "B" with the same blue-and-red two-part underline beneath it.
+
+Keep everything crisp with lots of white space around each element.

@@ -15,7 +15,8 @@
 #		include <boot/images-tm-development.h>
 #	endif
 #else
-#	include <boot/images-sans-tm.h>
+	// Beacon: our own splash logo (data/artwork/beacon, tools/gen_boot_splash.py)
+#	include <boot/images-beacon.h>
 #endif
 
 #endif	/* KERNEL_BOOT_ARCH_H */

@@ -27,7 +27,8 @@ resource(1, "logo.png") #'PNG ' import "../../../data/artwork/HAIKU logo - black
 resource(2, "logo_dark.png") #'PNG ' import "../../../data/artwork/HAIKU logo - white on transparent - tiny - versioned.png";
 #endif
 #else
-resource(1, "walter_logo.png") #'PNG ' import "../../../data/artwork/Walter logo.png";
+// Beacon: the Beacon wordmark replaces the Walter logo in non-official builds
+resource(1, "walter_logo.png") #'PNG ' import "../../../data/artwork/beacon/beacon_logo_about.png";
 #endif
 
 resource vector_icon {
