@@ -186,6 +186,7 @@ rule DefineDefaultBuildProfiles
 
 			AddHaikuImageSystemPackages
 				openssl3
+				libjpeg_turbo	# Beacon: JPEG translator (default wallpaper)
 				;
 		}
 

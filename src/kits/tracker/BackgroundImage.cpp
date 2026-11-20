@@ -37,12 +37,15 @@ All rights reserved.
 
 #include <Bitmap.h>
 #include <ControlLook.h>
+#include <FindDirectory.h>
+#include <Path.h>
 #include <Node.h>
 #include <TranslationKit.h>
 #include <View.h>
 #include <Window.h>
 
 #include <fs_attr.h>
+#include <unistd.h>
 
 #include "BackgroundImage.h"
 
@@ -70,8 +73,34 @@ BackgroundImage*
 BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 {
 	attr_info info;
-	if (node->GetAttrInfo(kBackgroundImageInfo, &info) != B_OK)
-		return NULL;
+	if (node->GetAttrInfo(kBackgroundImageInfo, &info) != B_OK) {
+		// Beacon: on first run the Desktop has no background yet; give it the
+		// Beacon wallpaper, written as a normal setting so the Backgrounds
+		// preferences show it and can change it.
+		BPath wallpaper;
+		if (!isDesktop
+			|| find_directory(B_SYSTEM_DATA_DIRECTORY, &wallpaper) != B_OK
+			|| wallpaper.Append("artwork/beacon-wallpaper.jpg") != B_OK
+			|| access(wallpaper.Path(), R_OK) != 0)
+			return NULL;
+
+		BMessage defaults;
+		defaults.AddString(kBackgroundImageInfoPath, wallpaper.Path());
+		defaults.AddInt32(kBackgroundImageInfoWorkspaces,
+			(int32)B_ALL_WORKSPACES);
+		defaults.AddInt32(kBackgroundImageInfoMode, kScaledToFit);
+		defaults.AddBool(kBackgroundImageInfoTextOutline, true);
+		defaults.AddPoint(kBackgroundImageInfoOffset, BPoint(0, 0));
+		ssize_t flatSize = defaults.FlattenedSize();
+		char* flat = new char[flatSize];
+		if (defaults.Flatten(flat, flatSize) == B_OK) {
+			const_cast<BNode*>(node)->WriteAttr(kBackgroundImageInfo,
+				B_MESSAGE_TYPE, 0, flat, flatSize);
+		}
+		delete[] flat;
+		if (node->GetAttrInfo(kBackgroundImageInfo, &info) != B_OK)
+			return NULL;
+	}
 
 	BMessage container;
 	char* buffer = new char[info.size];
