@@ -1,6 +1,9 @@
 
 #include "icons.h"
 
+// Beacon wordmark for the Deskbar button (data/artwork/beacon/deskbar_logo.png)
+resource(R_BeaconLogoRaw, "beacon logo") #'RAWT' import "../../../data/artwork/beacon/deskbar_logo_252x88.bgra";
+
 resource(R_LeafLogoBitmap) vector_icon {
 	$"6E6369660102010602438798C0E5A13DF937406BAE4D330E4CA0420000AAFFFF"
 	$"00337F010216C676C7BCC676C7BCCDE4CEECDD2DCFB2D596D105DBF0CEC5DAD9"

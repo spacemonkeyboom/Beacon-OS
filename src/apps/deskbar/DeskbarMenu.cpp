@@ -250,7 +250,7 @@ B_TRANSLATE_MARK_VOID("About this system")
 #ifdef HAIKU_DISTRO_COMPATIBILITY_OFFICIAL
 	B_TRANSLATE_NOCOLLECT("About Haiku")
 #else
-	B_TRANSLATE_NOCOLLECT("About this system")
+	"About Beacon"	// Beacon
 #endif
 		, new BMessage(kShowSplash));
 	item->SetEnabled(!dragging);

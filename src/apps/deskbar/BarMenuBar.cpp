@@ -119,7 +119,61 @@ TBarMenuBar::TBarMenuBar(BRect frame, const char* name, TBarView* barView)
 
 	BBitmap* icon = NULL;
 	size_t dataSize;
-	const void* data = AppResSet()->FindResource(B_VECTOR_ICON_TYPE,
+
+	// Beacon: the Beacon wordmark (raw 252x88 BGRA, straight alpha), scaled
+	// down with an area filter to the size the leaf would have had.
+	const void* data = AppResSet()->FindResource('RAWT', R_BeaconLogoRaw,
+		&dataSize);
+	const int32 kLogoW = 252, kLogoH = 88;
+	if (data != NULL && dataSize == (size_t)kLogoW * kLogoH * 4) {
+		int32 width = (int32)std::max(63.f,
+			ceilf(63 * be_bold_font->Size() / 12.f));
+		int32 height = (int32)std::max(22.f,
+			ceilf(22 * be_bold_font->Size() / 12.f));
+		width = std::min(width, kLogoW);
+		height = std::min(height, kLogoH);
+		icon = new BBitmap(BRect(0, 0, width - 1, height - 1), B_RGBA32);
+		if (icon->InitCheck() == B_OK) {
+			const uint8* src = (const uint8*)data;
+			uint8* dst = (uint8*)icon->Bits();
+			int32 bpr = icon->BytesPerRow();
+			for (int32 y = 0; y < height; y++) {
+				int32 y0 = y * kLogoH / height;
+				int32 y1 = std::max(y0 + 1, (y + 1) * kLogoH / height);
+				for (int32 x = 0; x < width; x++) {
+					int32 x0 = x * kLogoW / width;
+					int32 x1 = std::max(x0 + 1, (x + 1) * kLogoW / width);
+					uint32 sum[4] = { 0, 0, 0, 0 };
+					uint32 count = 0;
+					for (int32 sy = y0; sy < y1; sy++) {
+						for (int32 sx = x0; sx < x1; sx++) {
+							const uint8* p = src + (sy * kLogoW + sx) * 4;
+							// premultiply so transparent pixels add no colour
+							sum[0] += p[0] * p[3];
+							sum[1] += p[1] * p[3];
+							sum[2] += p[2] * p[3];
+							sum[3] += p[3];
+							count++;
+						}
+					}
+					uint8* d = dst + y * bpr + x * 4;
+					if (sum[3] == 0) {
+						d[0] = d[1] = d[2] = d[3] = 0;
+					} else {
+						d[0] = sum[0] / sum[3];
+						d[1] = sum[1] / sum[3];
+						d[2] = sum[2] / sum[3];
+						d[3] = sum[3] / count;
+					}
+				}
+			}
+		} else {
+			delete icon;
+			icon = NULL;
+		}
+	}
+
+	data = icon != NULL ? NULL : AppResSet()->FindResource(B_VECTOR_ICON_TYPE,
 		R_LeafLogoBitmap, &dataSize);
 	if (data != NULL) {
 		// seems valid, scale bitmap according to be_bold_font size

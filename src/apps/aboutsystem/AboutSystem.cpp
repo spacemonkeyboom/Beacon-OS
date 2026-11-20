@@ -393,7 +393,7 @@ AboutApp::MessageReceived(BMessage* message)
 AboutWindow::AboutWindow()
 	:
 	BWindow(BRect(0, 0, kWindowWidth, kWindowHeight),
-		B_TRANSLATE("About this system"), B_TITLED_WINDOW,
+		"About Beacon", B_TITLED_WINDOW,
 		B_AUTO_UPDATE_SIZE_LIMITS | B_NOT_ZOOMABLE)
 {
 	SetLayout(new BGroupLayout(B_VERTICAL, 0));
@@ -984,12 +984,12 @@ SysInfoView::_GetOSVersion()
 {
 	BString revision;
 	// add system revision to os version
+	// Beacon: show the Beacon release, and the Haiku revision it is based on
 	const char* hrev = __get_haiku_revision();
 	if (hrev != NULL)
-		revision.SetToFormat(B_TRANSLATE_COMMENT("Version: %s",
-			"Version: R1 or hrev99999"), hrev);
+		revision.SetToFormat("Beacon 0.1 (Haiku %s)", hrev);
 	else
-		revision = B_TRANSLATE("Version:");
+		revision = "Beacon 0.1";
 
 	return revision;
 }
@@ -1546,12 +1546,33 @@ AboutView::_CreateCreditsView()
 		fCreditsView, B_WILL_DRAW | B_FRAME_EVENTS, false, true,
 		B_PLAIN_BORDER);
 
-	// Haiku copyright
 	BFont font(be_bold_font);
 	font.SetSize(font.Size() + 4);
 
+	// Beacon
+	{
+		const rgb_color kBeaconBlue = { 1, 68, 181, 255 };
+		const rgb_color kBeaconRed = { 231, 17, 27, 255 };
+		fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &kBeaconBlue);
+		fCreditsView->Insert("Be");
+		fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &kBeaconRed);
+		fCreditsView->Insert("acon\n");
+		fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fTextColor);
+		fCreditsView->Insert(COPYRIGHT_STRING "2026 The Beacon Project. "
+			"Beacon brings the BeOS ecosystem to as many platforms as "
+			"possible. It is based on Haiku and stays binary-compatible with "
+			"it, but it is an independent project, not affiliated with or "
+			"endorsed by Haiku, Inc. Beacon's own code is MIT licensed; "
+			"some drivers are GPL-2.0, as noted in their source.\n\n");
+		fCreditsView->SetFontAndColor(be_plain_font, B_FONT_ALL, &fLinkColor);
+		fCreditsView->InsertHyperText("Visit the Beacon project",
+			new URLAction("https://github.com/spacemonkeyboom/Beacon-OS"));
+		fCreditsView->Insert("\n\n");
+	}
+
+	// Haiku copyright (Beacon is based on Haiku)
 	fCreditsView->SetFontAndColor(&font, B_FONT_ALL, &fHaikuGreenColor);
-	fCreditsView->Insert("Haiku\n");
+	fCreditsView->Insert("Based on Haiku\n");
 
 	time_t time = ::time(NULL);
 	struct tm* tm = localtime(&time);
