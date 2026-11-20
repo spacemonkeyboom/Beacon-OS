@@ -23,6 +23,10 @@
 
 #include "xhci.h"
 
+// Beacon diagnostics/experiments for the VIA VL805 (see PROGRESS.md 2026-11-20)
+#define BEACON_FS_ESIT 1
+#define BEACON_XHCI_DIAG 1
+
 
 #define CALLED(x...)	TRACE_MODULE("CALLED %s\n", __PRETTY_FUNCTION__)
 
@@ -483,6 +487,22 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 		break;
 	}
 
+	// Beacon: VIA VL805 quirks. The VL805 hangs its USB 2.0 ports off an
+	// internal high-speed hub, so keyboards and mice reach it through that
+	// hub's transaction translator. Firmware older than 0x0138c0 can babble a
+	// downstream port when a full-speed non-periodic transfer is queued on an
+	// idle ring late in micro-frame 7 (the same erratum the Raspberry Pi
+	// kernel works around). Our own implementation; see _VL805TTWait().
+	fVL805 = false;
+	fVL805HubTT = false;
+	if (fPCIInfo->vendor_id == 0x1106 && fPCIInfo->device_id == 0x3483) {
+		fVL805 = true;
+		uint32 firmware = fPci->read_pci_config(fDevice, 0x50, 4);
+		fVL805HubTT = firmware < 0x0138c0;
+		TRACE_ALWAYS("VIA VL805, firmware %#06" B_PRIx32 "%s\n", firmware,
+			fVL805HubTT ? ": enabling the hub TT micro-frame workaround" : "");
+	}
+
 	// We need to explicitly take ownership of EHCI ports on earlier Intel chipsets.
 	if (fPCIInfo->vendor_id == PCI_VENDOR_INTEL) {
 		switch (fPCIInfo->device_id) {
@@ -910,6 +930,9 @@ XHCI::SubmitControlRequest(Transfer* transfer)
 		descriptor->trbs[index].flags = TRB_3_TYPE(TRB_TYPE_DATA_STAGE)
 			| (directionIn ? TRB_3_DIR_IN : 0)
 			| TRB_3_CYCLE_BIT;
+		// Beacon (VL805 in-ring layout): short IN data must be reported.
+		if (fVL805 && directionIn)
+			descriptor->trbs[index].flags |= TRB_3_ISP_BIT;
 
 		if (!directionIn) {
 			transfer->PrepareKernelAccess();
@@ -996,6 +1019,17 @@ XHCI::SubmitNormalRequest(Transfer* transfer)
 			return B_BAD_VALUE;
 	}
 
+	// Beacon: the VIA VL805 rejects ("TRB Error") interrupt TDs that are
+	// split into several TRBs at max-burst-payload boundaries for
+	// full/low-speed devices behind its internal hub's TT. Linux queues such
+	// a transfer as one TRB; do the same for small interrupt transfers.
+	if (fVL805 && isochronousData == NULL && !transfer->IsPhysical()
+		&& (pipe->Type() & USB_OBJECT_INTERRUPT_PIPE) != 0
+		&& transfer->FragmentLength() > trbSize
+		&& transfer->FragmentLength() <= B_PAGE_SIZE) {
+		trbSize = transfer->FragmentLength();
+	}
+
 	// Now that we know trbSize, compute the count.
 	int32 trbCount;
 	if (isochronousData != NULL)
@@ -1023,6 +1057,21 @@ XHCI::SubmitNormalRequest(Transfer* transfer)
 	xhci_td* td = CreateDescriptor(trbCount, trbCount, trbSize);
 	if (td == NULL)
 		return B_NO_MEMORY;
+
+#if BEACON_XHCI_DIAG
+	if (fVL805 && endpoint->device->slot >= 2) {
+		static int32 sSubmitDiag = 0;
+		if (atomic_add(&sSubmitDiag, 1) < 60) {
+			TRACE_ALWAYS("diag submit: slot %d ep %d len %" B_PRIuGENADDR
+				" trbs %" B_PRId32 " trbSize %" B_PRIuSIZE " maxp %" B_PRIu16
+				" mbp %" B_PRIu16 " td %#" B_PRIxPHYSADDR "\n",
+				endpoint->device->slot, endpoint->id + 1,
+				(generic_addr_t)transfer->FragmentLength(), trbCount,
+				trbSize, (uint16)pipe->MaxPacketSize(),
+				endpoint->max_burst_payload, td->trb_addr);
+		}
+	}
+#endif
 
 	// Normal Stage
 	const size_t maxPacketSize = pipe->MaxPacketSize();
@@ -1068,6 +1117,13 @@ XHCI::SubmitNormalRequest(Transfer* transfer)
 			| TRB_2_TD_SIZE(tdSize);
 		td->trbs[i].flags = TRB_3_TYPE(TRB_TYPE_NORMAL)
 			| TRB_3_CYCLE_BIT | TRB_3_CHAIN_BIT;
+		// Beacon: on the VIA VL805, IN transfers also report short packets
+		// (ISP), as Linux always does. Without it the controller must skip
+		// from the short TRB through the TD's Link TRB to the Event Data TRB
+		// on the ring, which the VL805 gets wrong for full/low-speed devices
+		// behind its internal hub (TRB / Split Transaction errors, stalls).
+		if (fVL805 && directionIn && isochronousData == NULL)
+			td->trbs[i].flags |= TRB_3_ISP_BIT;
 
 		td->trb_used++;
 	}
@@ -1184,7 +1240,17 @@ XHCI::CancelQueuedTransfers(Pipe* pipe, bool force)
 	// complete, one of the queued transfers posts a completion event, so in
 	// order to avoid a deadlock, we must unlock the endpoint.
 	endpointLocker.Unlock();
-	status_t status = StopEndpoint(false, endpoint);
+	status_t status;
+	if (_GetEndpointState(endpoint) == ENDPOINT_STATE_ERROR) {
+		// Beacon: a TRB Error leaves the endpoint in the Error state, which
+		// Stop Endpoint rejects (Context State error) and Reset Endpoint
+		// does not apply to; Set TR Dequeue Pointer (below) moves it to
+		// Stopped. (XHCI 1.2 § 4.8.3.) Without this the device stays dead.
+		TRACE_ALWAYS("cancel queued transfers: endpoint in Error state, "
+			"resetting its dequeue pointer\n");
+		status = B_OK;
+	} else
+		status = StopEndpoint(false, endpoint);
 	if (status != B_OK && status != B_DEV_STALLED) {
 		// It is possible that the endpoint was stopped by the controller at the
 		// same time our STOP command was in progress, causing a "Context State"
@@ -1206,6 +1272,8 @@ XHCI::CancelQueuedTransfers(Pipe* pipe, bool force)
 	if (status == B_OK) {
 		// Clear the endpoint's TRBs.
 		memset(endpoint->trbs, 0, sizeof(xhci_trb) * XHCI_ENDPOINT_RING_SIZE);
+		if (fVL805)
+			_VL805InitRing(endpoint);
 		endpoint->used = 0;
 		endpoint->next = 0;
 
@@ -2097,6 +2165,9 @@ XHCI::_LinkDescriptorForPipe(xhci_td* descriptor, xhci_endpoint* endpoint)
 	endpoint->used++;
 	endpoint->td_list.Add(descriptor);
 
+	if (fVL805)
+		return _LinkDescriptorForPipeVL805(descriptor, endpoint, endpointLocker);
+
 	uint32 link = endpoint->next, eventdata = link + 1, next = eventdata + 1;
 	if (eventdata == XHCI_ENDPOINT_RING_SIZE || next == XHCI_ENDPOINT_RING_SIZE) {
 		// If it's "next" not "eventdata" that got us here, we will be leaving
@@ -2173,7 +2244,29 @@ XHCI::_LinkDescriptorForPipe(xhci_td* descriptor, xhci_endpoint* endpoint)
 		B_LENDIAN_TO_HOST_INT32(endpoint->trbs[link].flags));
 
 	endpoint->next = next;
+	const bool ttWait = endpoint->vl805_tt_wait && endpoint->used == 1;
 	endpointLocker.Unlock();
+
+	if (ttWait)
+		_VL805TTWait();
+
+#if BEACON_XHCI_DIAG
+	if (fVL805) {
+		static int32 sDiagCount = 0;
+		int32 n = endpoint->device->slot >= 2 ? atomic_add(&sDiagCount, 1) : 1000;
+		if (n < 80) {
+			uint64 deq = _ReadContext(
+				&endpoint->device->device_ctx->endpoints[endpoint->id].qwendpoint2);
+			TRACE_ALWAYS("diag ring: slot %d ep %d state %" B_PRIu32 " hw deq %#"
+				B_PRIx64 " (index %" B_PRId64 ") link at %" B_PRIu32 " next %d used %d\n",
+				endpoint->device->slot, endpoint->id + 1,
+				ENDPOINT_0_STATE_GET(_ReadContext(
+					&endpoint->device->device_ctx->endpoints[endpoint->id].dwendpoint0)),
+				deq, (int64)(((deq & ~(uint64)0xf) - endpoint->trb_addr)
+					/ sizeof(xhci_trb)), link, endpoint->next, endpoint->used);
+		}
+	}
+#endif
 
 	TRACE("Endpoint status 0x%08" B_PRIx32 " 0x%08" B_PRIx32 " 0x%016" B_PRIx64 "\n",
 		_ReadContext(&endpoint->device->device_ctx->endpoints[endpoint->id].dwendpoint0),
@@ -2188,6 +2281,206 @@ XHCI::_LinkDescriptorForPipe(xhci_td* descriptor, xhci_endpoint* endpoint)
 		_ReadContext(&endpoint->device->device_ctx->endpoints[endpoint->id].qwendpoint2));
 
 	return B_OK;
+}
+
+
+void
+XHCI::_VL805InitRing(xhci_endpoint* endpoint)
+{
+	memset(endpoint->trbs, 0, sizeof(xhci_trb) * XHCI_ENDPOINT_RING_SIZE);
+	xhci_trb& link = endpoint->trbs[XHCI_ENDPOINT_RING_SIZE - 1];
+	link.address = B_HOST_TO_LENDIAN_INT64(endpoint->trb_addr);
+	link.status = B_HOST_TO_LENDIAN_INT32(TRB_2_IRQ(0));
+	link.flags = B_HOST_TO_LENDIAN_INT32(TRB_3_TYPE(TRB_TYPE_LINK)
+		| TRB_3_TC_BIT);	// cycle bit 0 until we pass it with PCS 1
+	endpoint->vl805_enqueue = 0;
+	endpoint->vl805_pcs = 1;
+	endpoint->vl805_ring_used = 0;
+	endpoint->vl805_skip_event_data = 0;
+	memory_write_barrier();
+}
+
+
+status_t
+XHCI::_LinkDescriptorForPipeVL805(xhci_td* descriptor, xhci_endpoint* endpoint,
+	MutexLocker& endpointLocker)
+{
+	// Beacon: VIA VL805. Haiku's usual layout reaches every TD through Link
+	// TRBs and ends it with an Event Data TRB on the ring. The VL805 hangs
+	// on that now and then (then the whole bus stalls: stuck keys, dead
+	// mouse, hub timeouts). Here the TD's TRBs are copied onto the endpoint
+	// ring itself, like Linux does: one Link TRB (Toggle Cycle) at the end
+	// of the ring, IOC on the TD's last TRB, no Event Data TRBs. The data
+	// buffers stay in the descriptor.
+	const uint32 count = descriptor->trb_used;
+	const uint32 ringData = XHCI_ENDPOINT_RING_SIZE - 1;
+	if (count == 0 || endpoint->vl805_ring_used + count + 2 > ringData) {
+		endpoint->td_list.Remove(descriptor);
+		endpoint->used--;
+		TRACE_ERROR("VL805: endpoint ring full\n");
+		return B_BAD_VALUE;
+	}
+
+	bool control = false;
+	for (uint32 i = 0; i < count; i++) {
+		if (TRB_3_TYPE_GET(descriptor->trbs[i].flags) == TRB_TYPE_SETUP_STAGE)
+			control = true;
+	}
+
+	descriptor->vl805_first = endpoint->vl805_enqueue;
+	descriptor->vl805_short = -1;
+	descriptor->vl805_control = control;
+	uint32 slots = 0;
+	uint32 index = endpoint->vl805_enqueue;
+	uint8 pcs = endpoint->vl805_pcs;
+	xhci_trb* first = NULL;
+	uint32 firstFlags = 0;
+
+	for (uint32 i = 0; i < count; i++) {
+		uint32 flags = descriptor->trbs[i].flags;
+		flags &= ~(TRB_3_CYCLE_BIT | TRB_3_ENT_BIT | TRB_3_IOC_BIT);
+		const bool last = (i == count - 1);
+		if (last)
+			flags = (flags & ~TRB_3_CHAIN_BIT) | TRB_3_IOC_BIT;
+		flags |= pcs ? TRB_3_CYCLE_BIT : 0;
+
+		xhci_trb* dst = &endpoint->trbs[index];
+		dst->address = B_HOST_TO_LENDIAN_INT64(descriptor->trbs[i].address);
+		dst->status = B_HOST_TO_LENDIAN_INT32(descriptor->trbs[i].status);
+		if (first == NULL) {
+			// Publish the first TRB last: write it with the wrong cycle bit.
+			first = dst;
+			firstFlags = flags;
+			dst->flags = B_HOST_TO_LENDIAN_INT32(flags ^ TRB_3_CYCLE_BIT);
+		} else
+			dst->flags = B_HOST_TO_LENDIAN_INT32(flags);
+		slots++;
+		index++;
+
+		if (index == ringData) {
+			// Pass the Link TRB: hand it over with the current cycle (and
+			// the chain bit if the TD continues), then toggle.
+			xhci_trb* link = &endpoint->trbs[ringData];
+			uint32 linkFlags = TRB_3_TYPE(TRB_TYPE_LINK) | TRB_3_TC_BIT
+				| (pcs ? TRB_3_CYCLE_BIT : 0);
+			if (!last && (flags & TRB_3_CHAIN_BIT) != 0)
+				linkFlags |= TRB_3_CHAIN_BIT;
+			if (link == first) {
+				firstFlags = linkFlags;
+			} else
+				link->flags = B_HOST_TO_LENDIAN_INT32(linkFlags);
+			pcs ^= 1;
+			index = 0;
+			slots++;
+		}
+	}
+	// A TD's last TRB may land right before the Link: then the Link is
+	// passed at the next enqueue, which handles it above.
+
+	memory_write_barrier();
+	first->flags = B_HOST_TO_LENDIAN_INT32(firstFlags);
+	memory_write_barrier();
+
+	descriptor->vl805_count = slots;
+	endpoint->vl805_enqueue = index;
+	endpoint->vl805_pcs = pcs;
+	endpoint->vl805_ring_used += slots;
+
+	const bool ttWait = endpoint->vl805_tt_wait && endpoint->used == 1;
+	endpointLocker.Unlock();
+
+	if (ttWait)
+		_VL805TTWait();
+
+	Ring(endpoint->device->slot, endpoint->id + 1);
+	return B_OK;
+}
+
+
+bool
+XHCI::_VL805HandleEvent(xhci_endpoint* endpoint, xhci_trb* trb,
+	uint8 completionCode, int32 remainder, MutexLocker& endpointLocker)
+{
+	// Events for the in-ring layout point at ring TRBs. TDs on one endpoint
+	// complete in order, so the event belongs to the oldest TD.
+	phys_addr_t source = B_LENDIAN_TO_HOST_INT64(trb->address);
+	if (source < endpoint->trb_addr || source >= endpoint->trb_addr
+			+ XHCI_ENDPOINT_RING_SIZE * sizeof(xhci_trb))
+		return false;
+	const uint32 ringIndex = (source - endpoint->trb_addr) / sizeof(xhci_trb);
+
+	xhci_td* td = endpoint->td_list.Head();
+	if (td == NULL)
+		return true;
+
+	// Position of the event's TRB inside the TD (skipping a passed Link).
+	int32 position = -1, dataBefore = 0;
+	uint32 index = td->vl805_first;
+	for (uint32 i = 0, n = 0; n < td->vl805_count; n++) {
+		if (index == XHCI_ENDPOINT_RING_SIZE - 1) {
+			index = 0;
+			continue;
+		}
+		if (index == ringIndex) {
+			position = i;
+			break;
+		}
+		uint32 type = TRB_3_TYPE_GET(td->trbs[i].flags);
+		if (type == TRB_TYPE_NORMAL || type == TRB_TYPE_DATA_STAGE)
+			dataBefore += TRB_2_BYTES_GET(td->trbs[i].status);
+		i++;
+		index++;
+	}
+	if (position < 0) {
+		TRACE_ERROR("VL805: event for ring TRB %" B_PRIu32 " not in the "
+			"oldest TD (cc %d)\n", ringIndex, completionCode);
+		return true;
+	}
+
+	const bool lastTrb = (position == (int32)td->trb_used - 1);
+	const uint32 type = TRB_3_TYPE_GET(td->trbs[position].flags);
+	if (completionCode == COMP_SHORT_PACKET && !lastTrb) {
+		td->vl805_short = dataBefore
+			+ TRB_2_BYTES_GET(td->trbs[position].status) - remainder;
+		if (td->vl805_control)
+			return true;	// the status stage still reports completion
+	}
+
+	int32 transferred;
+	if (td->vl805_short >= 0)
+		transferred = td->vl805_short;
+	else if (completionCode == COMP_SUCCESS && lastTrb && !td->vl805_control) {
+		transferred = dataBefore + TRB_2_BYTES_GET(td->trbs[position].status)
+			- remainder;
+	} else if (completionCode == COMP_SHORT_PACKET
+			&& (type == TRB_TYPE_NORMAL || type == TRB_TYPE_DATA_STAGE)) {
+		transferred = dataBefore + TRB_2_BYTES_GET(td->trbs[position].status)
+			- remainder;
+	} else if (td->vl805_control && completionCode == COMP_SUCCESS) {
+		transferred = -1;	// whole data stage
+		remainder = 0;
+	} else {
+		transferred = dataBefore;	// error or stop
+	}
+
+	if (completionCode == COMP_SHORT_PACKET)
+		completionCode = COMP_SUCCESS;
+
+	endpoint->vl805_ring_used -= min_c(endpoint->vl805_ring_used,
+		td->vl805_count);
+	_UnlinkDescriptorForPipe(td, endpoint);
+	endpointLocker.Unlock();
+
+	td->trb_completion_code = completionCode;
+	td->td_transferred = transferred;
+	td->trb_left = transferred < 0 ? remainder : 0;
+
+	if (mutex_trylock(&fFinishedLock) != B_OK)
+		mutex_lock(&fFinishedLock);
+	fFinishedList.Add(td);
+	mutex_unlock(&fFinishedLock);
+	release_sem_etc(fFinishTransfersSem, 1, B_DO_NOT_RESCHEDULE);
+	return true;
 }
 
 
@@ -2214,6 +2507,8 @@ XHCI::ConfigureEndpoint(xhci_endpoint* ep, uint8 slot, uint8 number, uint8 type,
 	uint32 dwendpoint1 = 0;
 	uint64 qwendpoint2 = 0;
 	uint32 dwendpoint4 = 0;
+
+	_VL805MarkEndpoint(ep, device, type, speed);
 
 	// Compute and assign the endpoint type. (XHCI 1.2 § 6.2.3 Table 6-9 p452.)
 	uint8 xhciType = 4;
@@ -2308,8 +2603,13 @@ XHCI::ConfigureEndpoint(xhci_endpoint* ep, uint8 slot, uint8 number, uint8 type,
 		// method if bytesPerInterval is 0.
 		if (speed >= USB_SPEED_SUPERSPEED && bytesPerInterval != 0)
 			dwendpoint4 |= ENDPOINT_4_MAXESITPAYLOAD(bytesPerInterval);
-		else if (speed >= USB_SPEED_HIGHSPEED)
+		else if (speed >= USB_SPEED_HIGHSPEED || BEACON_FS_ESIT) {
+			// Beacon: also for full/low speed (BEACON_FS_ESIT). The spec (XHCI 1.2 § 6.2.3.8)
+			// requires it for every periodic endpoint, and controllers that
+			// schedule periodic split transactions through a hub TT (VIA
+			// VL805) misbehave when it is 0. Linux does the same.
 			dwendpoint4 |= ENDPOINT_4_MAXESITPAYLOAD((maxBurst + 1) * maxPacketSize);
+		}
 	}
 
 	_WriteContext(&device->input_ctx->endpoints[number].dwendpoint0,
@@ -2598,6 +2898,41 @@ XHCI::Interrupt()
 
 
 void
+XHCI::_VL805MarkEndpoint(xhci_endpoint* endpoint, xhci_device* device,
+	uint8 type, usb_speed speed)
+{
+	endpoint->vl805_tt_wait = false;
+	endpoint->vl805_skip_event_data = 0;
+	if (fVL805)
+		_VL805InitRing(endpoint);
+	if (!fVL805HubTT || speed != USB_SPEED_FULLSPEED
+		|| (type & (USB_OBJECT_CONTROL_PIPE | USB_OBJECT_BULK_PIPE)) == 0)
+		return;
+
+	// Only devices directly behind the VL805's internal hub (route string
+	// tier 1 at most) sit on the affected TT.
+	uint32 route = SLOT_0_ROUTE_GET(_ReadContext(&device->input_ctx->slot.dwslot0));
+	if ((route & 0xffff0) != 0)
+		return;
+	endpoint->vl805_tt_wait = true;
+}
+
+
+void
+XHCI::_VL805TTWait()
+{
+	// MFINDEX counts micro-frames; its low 3 bits are the micro-frame of the
+	// next SOF. 0 means we are in micro-frame 7 now: wait for it to pass.
+	for (int32 i = 0; i < 20; i++) {
+		if ((ReadRunReg32(XHCI_MFINDEX) & 0x7) != 0)
+			return;
+		spin(10);
+	}
+	TRACE_ERROR("VL805: MFINDEX did not advance\n");
+}
+
+
+void
 XHCI::Ring(uint8 slot, uint8 endpoint)
 {
 	TRACE("Ding Dong! slot:%d endpoint %d\n", slot, endpoint)
@@ -2703,6 +3038,18 @@ XHCI::HandleTransferComplete(xhci_trb* trb)
 		  (flags & TRB_3_EVENT_DATA_BIT), trb->status);
 
 	uint8 completionCode = TRB_2_COMP_CODE_GET(trb->status);
+#if BEACON_XHCI_DIAG
+	if (fVL805 && slot >= 2) {
+		static int32 sEventDiag = 0;
+		if (atomic_add(&sEventDiag, 1) < 80) {
+			TRACE_ALWAYS("diag event: slot %d ep %d cc %d ed %d len/rem %"
+				B_PRIu32 " addr %#" B_PRIx64 "\n", slot, endpointNumber,
+				completionCode, (flags & TRB_3_EVENT_DATA_BIT) != 0 ? 1 : 0,
+				TRB_2_REM_GET(trb->status),
+				(uint64)B_LENDIAN_TO_HOST_INT64(trb->address));
+		}
+	}
+#endif
 
 	if (completionCode == COMP_RING_OVERRUN || completionCode == COMP_RING_UNDERRUN) {
 		// These occur on isochronous endpoints when there is no TRB ready to be
@@ -2730,6 +3077,30 @@ XHCI::HandleTransferComplete(xhci_trb* trb)
 			&& completionCode != COMP_STOPPED && completionCode != COMP_STOPPED_LENGTH_INVALID) {
 		TRACE_ALWAYS("transfer error on slot %" B_PRId8 " endpoint %" B_PRId8
 			": %s\n", slot, endpointNumber, xhci_error_string(completionCode));
+#if BEACON_XHCI_DIAG
+		TRACE_ALWAYS("  diag: event addr %#" B_PRIx64 " ed %d status %#" B_PRIx32
+			"; ep ctx %#" B_PRIx32 " %#" B_PRIx32 " deq %#" B_PRIx64 " %#" B_PRIx32
+			"; ring base %#" B_PRIxPHYSADDR " used %d next %d\n",
+			(uint64)B_LENDIAN_TO_HOST_INT64(trb->address),
+			(flags & TRB_3_EVENT_DATA_BIT) != 0 ? 1 : 0, trb->status,
+			_ReadContext(&device->device_ctx->endpoints[endpointNumber - 1].dwendpoint0),
+			_ReadContext(&device->device_ctx->endpoints[endpointNumber - 1].dwendpoint1),
+			_ReadContext(&device->device_ctx->endpoints[endpointNumber - 1].qwendpoint2),
+			_ReadContext(&device->device_ctx->endpoints[endpointNumber - 1].dwendpoint4),
+			endpoint->trb_addr, endpoint->used, endpoint->next);
+#endif
+	}
+
+	if (fVL805) {
+		if (completionCode == COMP_STOPPED
+			|| completionCode == COMP_STOPPED_LENGTH_INVALID) {
+			// Stop Endpoint while cancelling: CancelQueuedTransfers frees
+			// the TDs and resets the ring.
+			return;
+		}
+		if (_VL805HandleEvent(endpoint, trb, completionCode,
+				TRB_2_REM_GET(trb->status), endpointLocker))
+			return;
 	}
 
 	phys_addr_t source = B_LENDIAN_TO_HOST_INT64(trb->address);
@@ -2741,6 +3112,12 @@ XHCI::HandleTransferComplete(xhci_trb* trb)
 		const int32 type = TRB_3_TYPE_GET(endpoint->trbs[offset].flags);
 		if (type == TRB_TYPE_EVENT_DATA || type == TRB_TYPE_LINK)
 			source = B_LENDIAN_TO_HOST_INT64(endpoint->trbs[offset].address);
+	}
+
+	if ((flags & TRB_3_EVENT_DATA_BIT) != 0 && endpoint->vl805_skip_event_data != 0
+			&& source == endpoint->vl805_skip_event_data) {
+		endpoint->vl805_skip_event_data = 0;
+		return;
 	}
 
 	for (xhci_td* td = endpoint->td_list.Head(); td != NULL; td = endpoint->td_list.GetNext(td)) {
@@ -2785,6 +3162,18 @@ XHCI::HandleTransferComplete(xhci_trb* trb)
 				completionCode = endpoint->status;
 				endpoint->status = 0;
 			}
+		} else if (completionCode == COMP_SHORT_PACKET
+				&& (flags & TRB_3_EVENT_DATA_BIT) == 0) {
+			// Beacon (VL805 ISP): short packet reported on a TD TRB. Bytes
+			// moved = all earlier TRBs + this TRB minus its residue. The
+			// Event Data TRB still posts an event later; skip that one.
+			transferred = 0;
+			for (int32 i = 0; i < offset; i++)
+				transferred += TRB_2_BYTES_GET(td->trbs[i].status);
+			transferred += TRB_2_BYTES_GET(td->trbs[offset].status) - remainder;
+			remainder = -1;
+			endpoint->vl805_skip_event_data = td->trb_addr
+				+ (td->trb_used - 1) * sizeof(xhci_trb);
 		} else if (completionCode == COMP_STOPPED_LENGTH_INVALID) {
 			// To determine transferred length, sum up the lengths of all TRBs
 			// prior to the referenced one. (XHCI 1.2 § 4.6.9 p136.)
@@ -3080,8 +3469,36 @@ XHCI::EventThread(void* data)
 void
 XHCI::CompleteEvents()
 {
+	int32 missed = 0;
 	while (!fStopThreads) {
-		if (acquire_sem(fEventSem) < B_OK)
+		// Beacon: on the VIA VL805 behind the StarFive PCIe bridge, event
+		// interrupts can stop arriving; then every device on the bus stalls
+		// (stuck keys, dead mouse, hub timeouts). Wake up every 100 ms and
+		// look at the event ring ourselves when no interrupt came.
+		status_t acquired = acquire_sem_etc(fEventSem, 1, B_RELATIVE_TIMEOUT,
+			fVL805 ? 100000 : B_INFINITE_TIMEOUT);
+		if (acquired == B_TIMED_OUT) {
+			uint32 flags = B_LENDIAN_TO_HOST_INT32(fEventRing[fEventIdx].flags);
+			uint8 cycle = (flags & TRB_3_CYCLE_BIT) != 0 ? 1 : 0;
+			uint32 iman = ReadRunReg32(XHCI_IMAN(0));
+			if (cycle != fEventCcs && (iman & IMAN_INTR_PENDING) == 0)
+				continue;
+
+			if (missed < 20 || (missed % 1000) == 0) {
+				TRACE_ALWAYS("VL805: missed event interrupt #%" B_PRId32
+					": STS %#" B_PRIx32 " IMAN %#" B_PRIx32 " event[%u] %s"
+					"\n", missed + 1, ReadOpReg(XHCI_STS), iman, fEventIdx,
+					cycle == fEventCcs ? "pending" : "empty");
+			}
+			missed++;
+			// Acknowledge like Interrupt() would, so the controller can
+			// signal again, then process what is there.
+			WriteOpReg(XHCI_STS, ReadOpReg(XHCI_STS) & STS_EINT);
+			WriteRunReg32(XHCI_IMAN(0), iman);
+			ProcessEvents();
+			continue;
+		}
+		if (acquired < B_OK)
 			continue;
 
 		// eat up sems that have been released by multiple interrupts

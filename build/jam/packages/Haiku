@@ -45,10 +45,12 @@ AddFilesToPackage add-ons kernel busses i2c :
 	pch_i2c@x86,x86_64
 	;
 AddFilesToPackage add-ons kernel busses mmc :
+	dw_mmc@riscv64
 	sdhci
 	;
 AddFilesToPackage add-ons kernel busses pci :
 	<pci>designware@riscv64
+	<pci>starfive@riscv64
 	<pci>ecam@riscv64,arm,arm64
 	<pci>x86@x86,x86_64
 	;
@@ -147,6 +149,7 @@ AddNewDriversToPackage power
 AddNewDriversToPackage sensor
 	: $(SYSTEM_ADD_ONS_DRIVERS_SENSOR) ;
 AddNewDriversToPackage network :
+#	dwmac@riscv64	# Beacon: left out of rv19 to isolate first-boot memory corruption
 	usb_ecm
 	virtio_net
 	;
@@ -346,6 +349,7 @@ AddBootModuleSymlinksToPackage
 	packagefs
 	pci
 	<pci>designware@riscv64
+	<pci>starfive@riscv64
 	<pci>ecam@riscv64,arm,arm64
 	<pci>x86@x86,x86_64
 	fdt@riscv64,arm,arm64
@@ -355,6 +359,7 @@ AddBootModuleSymlinksToPackage
 	scsi_periph
 	silicon_image_3112
 	smbios@x86,x86_64
+	dw_mmc@riscv64
 	sdhci
 	ufshci
 	usb

@@ -367,11 +367,25 @@ KeyboardProtocolHandler::Control(uint32 *cookie, uint32 op, void *buffer,
 				bigtime_t enterTime = system_time();
 				while (RingBufferReadable() == 0) {
 					status_t result = _ReadReport(fCurrentRepeatDelay, cookie);
-					if (result != B_OK && result != B_TIMED_OUT)
+					if (result != B_OK && result != B_TIMED_OUT) {
+						// Beacon diagnostic: why input_server keeps reopening
+						static int32 sReadErrors = 0;
+						if (atomic_add(&sReadErrors, 1) < 10) {
+							TRACE_ALWAYS("%s: KB_READ fails: %s (removed %d)\n",
+								PublishPath(), strerror(result),
+								fInputReport.Device()->IsRemoved() ? 1 : 0);
+						}
 						return result;
+					}
 
-					if (!Device()->IsOpen())
+					if (!Device()->IsOpen()) {
+						static int32 sNotOpen = 0;
+						if (atomic_add(&sNotOpen, 1) < 10) {
+							TRACE_ALWAYS("%s: KB_READ: device not open\n",
+								PublishPath());
+						}
 						return B_ERROR;
+					}
 
 					if (RingBufferReadable() == 0 && fCurrentRepeatKey != 0
 						&& system_time() - enterTime > fCurrentRepeatDelay) {
@@ -523,6 +537,15 @@ KeyboardProtocolHandler::_ReadReport(bigtime_t timeout, uint32 *cookie)
 			// we expect timeouts as we do repeat key handling this way,
 			// "busy" happens when other reports come in on the same endpoint
 			TRACE_ALWAYS("error waiting for report: %s\n", strerror(result));
+
+			// Beacon: a failing transfer means the key-up for a held key
+			// may never arrive. Release the repeating key instead of
+			// repeating it forever (seen as a "stuck" key on the desktop).
+			if (fCurrentRepeatKey != 0) {
+				_WriteKey(fCurrentRepeatKey, false);
+				fCurrentRepeatKey = 0;
+				fCurrentRepeatDelay = B_INFINITE_TIMEOUT;
+			}
 		}
 
 		// signal that we simply want to try again

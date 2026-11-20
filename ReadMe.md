@@ -1,61 +1,89 @@
-Haiku
-=======================
-**[Homepage](https://www.haiku-os.org/)
-| [Mailing Lists](https://www.haiku-os.org/community/ml)
-| [IRC Channels](https://www.haiku-os.org/community/irc)
-| [Issue Tracker](https://dev.haiku-os.org/)
-| [API docs](https://api.haiku-os.org)**
+<!-- SPDX-License-Identifier: MIT -->
+# Beacon
 
-Haiku is an open-source operating system that specifically targets personal
-computing. Inspired by the BeOS, Haiku is fast, simple to use, easy to learn
-and yet very powerful.
+**Beacon** brings the BeOS ecosystem to as many platforms as possible:
+single-board computers and odd hardware first. It is a fork of
+[Haiku](https://www.haiku-os.org/) and stays binary-compatible with Haiku, so
+Haiku and BeOS-style applications run unchanged.
 
-Goals
-------------
- * Sensible defaults with minimal configuration required.
- * Clean, clear, concise code.
- * Unified desktop environment.
+Beacon is an independent project. It is based on Haiku's source code but is
+**not affiliated with or endorsed by Haiku, Inc.** "Haiku" is a trademark of
+Haiku, Inc.; it is used here only to describe where the code comes from.
 
-Trying Haiku
----------------
-Haiku provides pre-built [nightly images](http://download.haiku-os.org/) and
-[release images](https://www.haiku-os.org/get-haiku). Haiku is compatible
-with a large variety of hardware, but in case you don't want to "take the
-plunge" and install Haiku on bare metal, you can install it on a virtual
-machine (VM) instead. If you've never used a VM before, you can follow one of
-the ["Emulating Haiku"](https://www.haiku-os.org/guides/virtualizing/) guides.
+Development is AI-assisted.
 
-Compiling Haiku
----------------
-See `ReadMe.Compiling`.
+## First target: Orange Pi RV (StarFive JH7110, RISC-V)
 
-Contributing
--------------------
-Haiku is a meritocratic open source project with a large variety of tasks. Even
-if you can't write code, *you can still help*! Haiku needs designers,
-(technical) writers, translators, testers... [Get involved](https://www.haiku-os.org/community/getting-involved/)
-and help out!
+| Area | Status |
+|---|---|
+| Boot from a single microSD card (vendor U-Boot, EFI) | Works |
+| 4 CPU cores (U74), RAM | Works |
+| HDMI desktop (1920x1080) | Works (display state carried over from U-Boot) |
+| USB 3 ports (VIA VL805 over PCIe): keyboard, mouse, hot-plug | Works (VL805 fixes in the xHCI driver) |
+| microSD card | Works (new `dw_mmc` driver, PIO) |
+| Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
+| Wired Ethernet | Driver written, **not in the image yet** (being fixed) |
+| Wi-Fi / Bluetooth (AP6256) | In progress (needs SDIO support) |
+| Audio (HDMI, 3.5 mm) | Planned |
+| Web browser | Planned (WebPositive first, Falkon later) |
 
-### Contributing code
-If you're submitting a patch to us, please make sure you're following the
-[patch submitting guidelines](https://dev.haiku-os.org/wiki/CodingGuidelines/SubmittingPatches).
+Known issues:
 
-If you're having trouble finding something in the source tree, you can use
-one of our web-based source code browsers:
+* The first boot after flashing unpacks packages and takes a few minutes.
+* Some keyboards with gaming "N-key rollover" reports may not type.
+* The boot loader currently restores the HDMI pipeline from U-Boot's state;
+  a proper display driver is planned.
 
- * https://grok.nikisoft.one/opengrok/ (OpenGrok, provided by Niklas Poslovski)
- * https://git.haiku-os.org/ (git, provided by Haiku, Inc.)
+## Try it
 
-### Contributing documentation
-The main piece of documentation that still needs work are the API docs (found
-in the tree at `docs/user`). Just find an undocumented class, write
-documentation for it, and [submit a patch](https://dev.haiku-os.org/wiki/CodingGuidelines/SubmittingPatches).
+1. Download the latest image from
+   [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases)
+   and check its SHA-256.
+2. Write it to a microSD card (any size from 1 GB). On Linux:
 
-### Contributing translations
-See [wiki:i18n](https://dev.haiku-os.org/wiki/i18n).
+   ```
+   xz -d beacon-*.mmc.image.xz
+   sudo dd if=beacon-*.mmc.image of=/dev/disk/by-id/<your-card> bs=4M conv=fsync status=progress
+   ```
 
-### Contributing software ports
-See [HaikuPorts](https://github.com/haikuports/haikuports/).
+   Use the card's `/dev/disk/by-id/...` name (`ls /dev/disk/by-id/ | grep mmc`)
+   so you cannot write to the wrong disk. This erases the card.
+3. Put the card in the Orange Pi RV, connect HDMI, a USB keyboard and mouse,
+   and power on. The board's own U-Boot (in SPI flash) starts Beacon; nothing
+   on the board is changed.
 
-### Contributing to our infrastructure
-See [Infrastructure](https://github.com/haiku/infrastructure/).
+A USB serial adapter on the debug UART (115200 baud) shows the full boot log.
+Please attach it to bug reports.
+
+## Reporting bugs
+
+Open an issue with: board and RAM size, image name, what you did, what you saw,
+and the serial log if you have one. Security problems: please open an issue
+marked **security** without exploit details and we will follow up.
+
+## Building
+
+Beacon builds like Haiku (see [ReadMe.Compiling.md](ReadMe.Compiling.md)).
+For the Orange Pi RV image:
+
+```
+mkdir generated.riscv64 && cd generated.riscv64
+../configure --cross-tools-source ../../buildtools --build-cross-tools riscv64 -j4
+jam -q -j4 @minimum-mmc
+```
+
+## Licences
+
+Beacon's own code is MIT. Haiku's code keeps its licences (mostly MIT; see
+[License.md](License.md) and the headers of each file). Some Beacon drivers
+are adapted from Linux or U-Boot and are **GPL-2.0**; each such driver says so
+in its headers and in a `THIRD_PARTY.md` next to it, for example
+`src/add-ons/kernel/busses/pci/starfive/` and
+`src/add-ons/kernel/drivers/network/ether/dwmac/`. The EFI boot loader's
+JH7110 display bring-up (`BEACON_DC_REPLAY` in
+`src/system/boot/platform/efi/arch/riscv64/arch_start.cpp`) replays a register
+sequence taken from the vendor U-Boot (GPL-2.0+), so the riscv64 boot loader
+binary is distributed under the GPL-2.0. Binaries built from GPL code are
+distributed together with this complete source.
+
+Haiku's original read-me is kept as [ReadMe.Haiku.md](ReadMe.Haiku.md).

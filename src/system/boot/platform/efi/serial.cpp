@@ -45,7 +45,7 @@ serial_putc(char ch)
 		return;
 	}
 
-#ifdef DEBUG
+#if 1 // Beacon: always fall back to EFI ConOut (e.g. U-Boot has no SERIAL_IO)
 	// If we don't have EFI serial_io, fallback to EFI stdio
 	if (sEFIAvailable) {
 		char16_t ucsBuffer[2];

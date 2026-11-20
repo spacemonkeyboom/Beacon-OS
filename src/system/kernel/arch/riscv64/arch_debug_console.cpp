@@ -97,7 +97,11 @@ arch_debug_serial_early_boot_message(const char *string)
 status_t
 arch_debug_console_init(kernel_args *args)
 {
-	if (strncmp(args->arch_args.uart.kind, UART_KIND_8250,
+	if (strncmp(args->arch_args.uart.kind, UART_KIND_8250_DW,
+			sizeof(args->arch_args.uart.kind)) == 0) {
+		sArchDebugUART = arch_get_uart_8250_dw(args->arch_args.uart.regs.start,
+			args->arch_args.uart.clock);
+	} else if (strncmp(args->arch_args.uart.kind, UART_KIND_8250,
 			sizeof(args->arch_args.uart.kind)) == 0) {
 		sArchDebugUART = arch_get_uart_8250(args->arch_args.uart.regs.start,
 			args->arch_args.uart.clock);

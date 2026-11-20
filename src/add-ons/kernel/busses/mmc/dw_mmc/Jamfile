@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src add-ons kernel busses mmc dw_mmc ;
+
+# Synopsys DesignWare MMC host controller (dw_mmc), first for the StarFive
+# JH7110. Contains Linux/U-Boot-derived code: GPL-2.0-or-later, see
+# THIRD_PARTY.md.
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders drivers ;
+SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+
+KernelAddon dw_mmc :
+	DwMmc.cpp
+	kernel_interface.cpp
+;

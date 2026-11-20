@@ -24,6 +24,8 @@ static uint64 sTimerFrequency = 10000000;
 
 static addr_range sPlic = {0};
 static addr_range sClint = {0};
+static addr_range sCcache = {0};
+static bool sNonCoherentDisplaySoC = false;
 
 
 void
@@ -46,6 +48,29 @@ arch_handle_fdt(const void* fdt, int node)
 			// TODO: improve incompatible CPU detection
 			if (!(fdt_getprop(fdt, node, "mmu-type", NULL) != NULL))
 				return;
+
+			// Beacon: skip harts marked unavailable, and monitor-only cores
+			// that have no S-mode/MMU even when the DT claims otherwise
+			// (the JH7110 U-Boot DT marks its S7 core "okay" with an
+			// mmu-type; starting it traps inside OpenSBI).
+			int statusLen;
+			const char* status = (const char*)fdt_getprop(fdt, node,
+				"status", &statusLen);
+			if (status != NULL && strcmp(status, "okay") != 0
+				&& strcmp(status, "ok") != 0) {
+				dprintf("cpu node %s: status \"%s\", skipped\n", name, status);
+				return;
+			}
+			int cpuCompatLen;
+			const char* cpuCompat = (const char*)fdt_getprop(fdt, node,
+				"compatible", &cpuCompatLen);
+			if (cpuCompat != NULL
+				&& (dtb_has_fdt_string(cpuCompat, cpuCompatLen, "sifive,s7")
+					|| dtb_has_fdt_string(cpuCompat, cpuCompatLen, "sifive,e51")
+					|| dtb_has_fdt_string(cpuCompat, cpuCompatLen, "sifive,e7"))) {
+				dprintf("cpu node %s: monitor core (no S-mode), skipped\n", name);
+				return;
+			}
 
 			platform_cpu_info* info;
 			arch_smp_register_cpu(&info);
@@ -71,6 +96,18 @@ arch_handle_fdt(const void* fdt, int node)
 
 	if (compatible == NULL)
 		return;
+
+	// Root node: the StarFive JH7110's display engine (DC8200) does not snoop
+	// the CPU caches.
+	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110"))
+		sNonCoherentDisplaySoC = true;
+
+	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110-ccache")
+		|| dtb_has_fdt_string(compatible, compatibleLen, "sifive,fu740-c000-ccache")
+		|| dtb_has_fdt_string(compatible, compatibleLen, "sifive,ccache0")) {
+		dtb_get_reg(fdt, node, 0, sCcache);
+		return;
+	}
 
 	if (dtb_has_fdt_string(compatible, compatibleLen, "riscv,clint0")) {
 		dtb_get_reg(fdt, node, 0, sClint);
@@ -114,4 +151,12 @@ arch_dtb_set_kernel_args(void)
 	gKernelArgs.arch_args.htif  = {.start = 0, .size = 0};
 	gKernelArgs.arch_args.plic  = sPlic;
 	gKernelArgs.arch_args.clint = sClint;
+
+	if (sNonCoherentDisplaySoC && sCcache.size != 0) {
+		gKernelArgs.arch_args.ccache = sCcache;
+		dprintf("ccache: %#" B_PRIx64 " (%#" B_PRIx64 "), display not cache "
+			"coherent: kernel will flush the frame buffer\n",
+			(uint64)sCcache.start, (uint64)sCcache.size);
+	} else
+		gKernelArgs.arch_args.ccache = {.start = 0, .size = 0};
 }

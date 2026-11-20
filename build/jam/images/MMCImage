@@ -124,6 +124,10 @@ actions BuildEfiSDImage1
 	echo 'os=haiku' > uEnv.txt
 	echo 'platform=efi' >> uEnv.txt
 	echo "loader=EFI/BOOT/$(EFINAME)" >> uEnv.txt
+	# Beacon: StarFive/Orange Pi vendor U-Boot (JH7110) imports uEnv.txt in
+	# bootcmd_distro and then runs fdt_loaddtb; redefine it to start our
+	# EFI loader with U-Boot's own device tree. Harmless elsewhere.
+	echo 'fdt_loaddtb=echo Beacon: starting Haiku EFI loader; load ${bootdev} ${devnum}:1 ${kernel_addr_r} EFI/BOOT/$(EFINAME); bootefi ${kernel_addr_r} ${fdtcontroladdr}' >> uEnv.txt
 
 	# Lay down partition map
 	OS_LENGTH=`expr ${MMC_SIZE} - ${BOOT_SIZE}`

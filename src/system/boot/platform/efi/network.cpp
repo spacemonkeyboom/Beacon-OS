@@ -178,11 +178,11 @@ EFIEthernetInterface::Init()
 		while (*ptr != '\0') {
 			if (*ptr == '=') {
 				TRACE("Key at %ld: %s\n", ptr - base, base);
-				// Found a key-value separator, see if it's a known option
-				if (ptr - base != 2)
-					continue;
-
-				if (strncmp(base, "ip", 2) == 0) {
+				// Found a key-value separator, see if it's a known option.
+				// Beacon fix: the old code did `continue` here without
+				// advancing ptr, looping forever on any key that isn't two
+				// characters long (e.g. U-Boot passing "console=...").
+				if (ptr - base == 2 && strncmp(base, "ip", 2) == 0) {
 					TRACE("Found ip configuration in command line\n");
 					break;
 				}

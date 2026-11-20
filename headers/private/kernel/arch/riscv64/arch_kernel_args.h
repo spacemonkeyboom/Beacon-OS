@@ -52,6 +52,11 @@ typedef struct {
 
 	uint32 hartIds[SMP_MAX_CPUS];
 	uint32 plicContexts[SMP_MAX_CPUS];
+
+	// Beacon: SiFive L2 cache controller (physical), set only on SoCs whose
+	// display engine is not cache coherent (StarFive JH7110). The kernel then
+	// flushes the boot frame buffer to RAM periodically. size 0 = unused.
+	addr_range	ccache;
 } _PACKED arch_kernel_args;
 
 #endif	/* KERNEL_ARCH_RISCV64_KERNEL_ARGS_H */

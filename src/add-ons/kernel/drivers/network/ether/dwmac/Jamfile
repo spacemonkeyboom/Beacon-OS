@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src add-ons kernel drivers network ether dwmac ;
+
+# Synopsys DesignWare Ethernet QoS (dwmac/eqos 5.20), first for the StarFive
+# JH7110. Contains U-Boot/Linux-derived code: the add-on is GPL-2.0-only,
+# see THIRD_PARTY.md.
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders drivers net ;
+
+KernelAddon dwmac :
+	Dwmac.cpp
+	YtPhy.cpp
+	kernel_interface.cpp
+;

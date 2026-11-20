@@ -1,0 +1,13 @@
+SubDir HAIKU_TOP src add-ons kernel busses pci starfive ;
+
+# StarFive JH7110 (PLDA XpressRICH) PCIe host controller.
+# Contains Linux-derived code: GPL-2.0-only, see THIRD_PARTY.md.
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+
+KernelAddon <pci>starfive :
+	StarFivePCIe.cpp
+	kernel_interface.cpp
+;

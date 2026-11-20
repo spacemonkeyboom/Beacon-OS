@@ -375,6 +375,20 @@ arch_mmu_generate_post_efi_page_tables(size_t memoryMapSize, efi_memory_descript
 	build_physical_memory_list(memoryMapSize, memoryMap, descriptorSize, descriptorVersion,
 		PHYSICAL_MEMORY_LOW, PHYSICAL_MEMORY_HIGH);
 
+	// Beacon: some firmware (StarFive/Orange Pi U-Boot) leaves the frame buffer
+	// inside ordinary RAM in the EFI memory map. Never let the kernel hand those
+	// pages out, or the screen shows (and is wiped by) unrelated data.
+	if (gKernelArgs.frame_buffer.enabled) {
+		uint64 fbStart = ROUNDDOWN(
+			(uint64)gKernelArgs.frame_buffer.physical_buffer.start, B_PAGE_SIZE);
+		uint64 fbEnd = ROUNDUP((uint64)gKernelArgs.frame_buffer.physical_buffer.start
+			+ gKernelArgs.frame_buffer.physical_buffer.size, B_PAGE_SIZE);
+		remove_physical_memory_range(fbStart, fbEnd - fbStart);
+		remove_physical_allocated_range(fbStart, fbEnd - fbStart);
+		dprintf("frame buffer %#" B_PRIx64 "-%#" B_PRIx64 " removed from RAM\n",
+			fbStart, fbEnd);
+	}
+
 	addr_range physMemRange;
 	GetPhysMemRange(physMemRange);
 	TRACE("physMemRange: %#" B_PRIxADDR ", %#" B_PRIxSIZE "\n",

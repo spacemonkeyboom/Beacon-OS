@@ -241,23 +241,31 @@ efi_main(efi_handle image, efi_system_table *systemTable)
 	kRuntimeServices = systemTable->RuntimeServices;
 
 	call_ctors();
+	dprintf("BEACON-TRACE: ctors done\n");
 
 	console_init();
 	serial_init();
 	serial_enable();
+	dprintf("BEACON-TRACE: serial enabled (console+serial up)\n");
 
 	sBootOptions = get_loader_boot_options() | console_check_boot_keys();
+	dprintf("BEACON-TRACE: boot options read\n");
 
 	// disable apm in case we ever load a 32-bit kernel...
 	gKernelArgs.platform_args.apm.version = 0;
 
 	cpu_init();
+	dprintf("BEACON-TRACE: cpu_init done\n");
 	acpi_init();
+	dprintf("BEACON-TRACE: acpi_init done\n");
 #ifdef _BOOT_FDT_SUPPORT
 	dtb_init();
+	dprintf("BEACON-TRACE: dtb_init done\n");
 #endif
 	timer_init();
+	dprintf("BEACON-TRACE: timer_init done\n");
 	smp_init();
+	dprintf("BEACON-TRACE: smp_init done, entering main()\n");
 
 	main(&args);
 

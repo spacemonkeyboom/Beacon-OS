@@ -37,6 +37,7 @@ main(stage2_args *args)
 
 	if (heap_init(args) < B_OK)
 		panic("Could not initialize heap!\n");
+	dprintf("BEACON-TRACE: heap initialized\n");
 
 	TRACE(("boot(): heap initialized...\n"));
 
@@ -50,12 +51,14 @@ main(stage2_args *args)
 	add_stage2_driver_settings(args);
 
 	platform_init_video();
+	dprintf("BEACON-TRACE: video init done\n");
 
 	// the main platform dependent initialisation
 	// has already taken place at this point.
 
 	if (vfs_init(args) < B_OK)
 		panic("Could not initialize VFS!\n");
+	dprintf("BEACON-TRACE: vfs_init done\n");
 
 	dprintf("Welcome to the Haiku boot loader!\n");
 	dprintf("Haiku revision: %s\n", get_haiku_revision());
@@ -94,6 +97,7 @@ main(stage2_args *args)
 		load_driver_settings(args, bootVolume.RootDirectory());
 #endif
 		status_t status;
+		dprintf("BEACON-TRACE: loading kernel\n");
 		while ((status = load_kernel(args, bootVolume)) < B_OK) {
 			// loading the kernel failed, so let the user choose another
 			// volume to boot from until it works
@@ -163,6 +167,7 @@ main(stage2_args *args)
 			platform_cleanup_devices();
 				// Further cleanup (e.g. heap_release) is the platform's responsibility.
 
+			dprintf("BEACON-TRACE: starting kernel\n");
 			platform_start_kernel();
 		}
 	}

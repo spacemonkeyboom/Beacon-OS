@@ -190,3 +190,28 @@ arch_get_uart_8250(addr_t base, int64 clock)
 	return uart;
 }
 
+
+
+// Beacon: DesignWare APB UART (snps,dw-apb-uart), e.g. StarFive JH7110.
+// reg-shift = 2, reg-io-width = 4.
+void
+DebugUART8250DW::Out8(int reg, uint8 value)
+{
+	*((volatile uint32*)(Base() + reg * sizeof(uint32))) = value;
+}
+
+
+uint8
+DebugUART8250DW::In8(int reg)
+{
+	return (uint8)*((volatile uint32*)(Base() + reg * sizeof(uint32)));
+}
+
+
+DebugUART8250*
+arch_get_uart_8250_dw(addr_t base, int64 clock)
+{
+	static char buffer[sizeof(DebugUART8250DW)];
+	DebugUART8250DW* uart = new(buffer) DebugUART8250DW(base, clock);
+	return uart;
+}

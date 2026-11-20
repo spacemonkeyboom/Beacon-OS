@@ -107,6 +107,7 @@
 #define XHCI_IMAN(n)		(0x0020 + (0x20 * (n)))
 // IMAN
 #define IMAN_INTR_ENA		0x00000002
+#define IMAN_INTR_PENDING	0x00000001	// IP, RW1C (Beacon)
 // Section 5.5.2.2
 #define XHCI_IMOD(n)		(0x0024 + (0x20 * (n)))
 // Section 5.5.2.3.1

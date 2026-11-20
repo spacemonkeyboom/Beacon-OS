@@ -13,3 +13,5 @@ KernelAddon sdhci :
 	sdhci_acpi.cpp
 	sdhci_pci.cpp
 ;
+
+SubInclude HAIKU_TOP src add-ons kernel busses mmc dw_mmc ;

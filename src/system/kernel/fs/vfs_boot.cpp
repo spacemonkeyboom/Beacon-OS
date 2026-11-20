@@ -477,6 +477,23 @@ vfs_mount_boot_file_system(kernel_args* args)
 	if (status < B_OK) {
 		panic("get_boot_partitions failed!");
 	}
+
+	// Beacon: boot devices behind USB hubs (or slow controllers) may show up
+	// a moment after the first scan, e.g. a USB stick behind the JH7110's
+	// VL805 + onboard hub. Rescan for up to ~15 seconds before giving up.
+	for (int32 retry = 0; partitions.IsEmpty() && retry < 60; retry++) {
+		if (retry == 0)
+			dprintf("vfs_boot: no boot partition yet, waiting for devices...\n");
+		snooze(250000);
+		status = get_boot_partitions(bootVolume, partitions);
+		if (status < B_OK)
+			panic("get_boot_partitions failed!");
+		if (!partitions.IsEmpty()) {
+			dprintf("vfs_boot: boot partition found after %" B_PRId32
+				" ms\n", (retry + 1) * 250);
+		}
+	}
+
 	if (partitions.IsEmpty()) {
 		panic("did not find any boot partitions! @! syslog | tail 15");
 	}

@@ -322,8 +322,10 @@ arch_int_init(kernel_args* args)
 	for (uint32 i = 0; i < args->num_cpus; i++)
 		sPlicContexts[i] = args->arch_args.plicContexts[i];
 
-	// TODO: read from FDT
-	reserve_io_interrupt_vectors(128, 0, INTERRUPT_TYPE_IRQ);
+	// TODO: read riscv,ndev from FDT.
+	// Beacon: reserve the PLIC architectural maximum (1024 sources) instead
+	// of 128; the JH7110 has 136 and its PCIe/USB/MMC IRQs sit above 128.
+	reserve_io_interrupt_vectors(1024, 0, INTERRUPT_TYPE_IRQ);
 
 	for (uint32 i = 0; i < args->num_cpus; i++)
 		gPlicRegs->contexts[sPlicContexts[i]].priorityThreshold = 0;

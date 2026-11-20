@@ -12,6 +12,7 @@
 #define XHCI_H
 
 
+#include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 
 #include "usb_private.h"
@@ -29,7 +30,9 @@ class XHCIRootHub;
 
 /* The endpoint ring needs space for 2 TRBs per transfer
  * (one for the link TRB, and one for the Event Data TRB). */
-#define XHCI_ENDPOINT_RING_SIZE	(XHCI_MAX_TRANSFERS * 2)
+// Beacon: 3 per transfer on the VIA VL805 (No-Op + Link + Event Data, see
+// _LinkDescriptorForPipe()), so allocate for that everywhere.
+#define XHCI_ENDPOINT_RING_SIZE	(XHCI_MAX_TRANSFERS * 3)
 
 
 struct xhci_td : public DoublyLinkedListLinkImpl<xhci_td> {
@@ -47,6 +50,12 @@ struct xhci_td : public DoublyLinkedListLinkImpl<xhci_td> {
 	uint8		trb_completion_code;
 	int32		td_transferred;
 	int32		trb_left;
+
+	// Beacon VL805 in-ring layout: where this TD's TRBs sit on the ring.
+	uint8		vl805_first;
+	uint8		vl805_count;	// ring slots used, including a passed Link
+	int32		vl805_short;	// bytes, from a short-packet event; -1 if none
+	bool		vl805_control;
 };
 
 
@@ -65,6 +74,17 @@ struct xhci_endpoint {
 
 	xhci_trb*		trbs; // [XHCI_ENDPOINT_RING_SIZE]
 	phys_addr_t 	trb_addr;
+
+	// Beacon: VIA VL805 hub-TT erratum (see XHCI::_VL805TTWait()).
+	bool			vl805_tt_wait;
+	// Beacon: Event Data event still to come for a TD we already completed
+	// on its short-packet (ISP) event; ignore it once.
+	phys_addr_t		vl805_skip_event_data;
+	// In-ring layout state (VL805): enqueue index, producer cycle state and
+	// ring slots in use. The last slot holds a Link TRB with Toggle Cycle.
+	uint8			vl805_enqueue;
+	uint8			vl805_pcs;
+	uint8			vl805_ring_used;
 };
 
 
@@ -180,6 +200,18 @@ private:
 
 			// Doorbell
 			void				Ring(uint8 slot, uint8 endpoint);
+			void				_VL805TTWait();
+			void				_VL805InitRing(xhci_endpoint* endpoint);
+			bool				_VL805HandleEvent(xhci_endpoint* endpoint,
+									xhci_trb* trb, uint8 completionCode,
+									int32 remainder,
+									MutexLocker& endpointLocker);
+			status_t			_LinkDescriptorForPipeVL805(xhci_td* descriptor,
+									xhci_endpoint* endpoint,
+									MutexLocker& endpointLocker);
+			void				_VL805MarkEndpoint(xhci_endpoint* endpoint,
+									xhci_device* device, uint8 type,
+									usb_speed speed);
 
 			// Commands
 			status_t			Noop();
@@ -238,6 +270,9 @@ private:
 			Stack *				fStack;
 			uint32				fIRQ;
 			bool				fUseMSI;
+			// Beacon: VIA VL805 (Raspberry Pi 4, Orange Pi RV) quirks
+			bool				fVL805;
+			bool				fVL805HubTT;
 
 			area_id				fErstArea;
 			xhci_erst_element *	fErst;

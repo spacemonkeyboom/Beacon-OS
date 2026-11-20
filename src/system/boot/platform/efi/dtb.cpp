@@ -74,7 +74,12 @@ const struct supported_uarts {
 } kSupportedUarts[] = {
 	{ "ns16550a", UART_KIND_8250, &get_uart<DebugUART8250> },
 	{ "ns16550", UART_KIND_8250, &get_uart<DebugUART8250> },
+#if defined(__riscv)
+	// Beacon: DW UART has 4-byte register spacing (generic 8250 is byte-spaced on riscv)
+	{ "snps,dw-apb-uart", UART_KIND_8250_DW, &get_uart<DebugUART8250DW> },
+#else
 	{ "snps,dw-apb-uart", UART_KIND_8250, &get_uart<DebugUART8250> },
+#endif
 #if defined(__riscv)
 	{ "sifive,uart0", UART_KIND_SIFIVE, &get_uart<ArchUARTSifive> },
 #elif defined(__ARM__)
