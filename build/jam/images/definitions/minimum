@@ -274,7 +274,7 @@ SYSTEM_ADD_ONS_ACCELERANTS = [ FFilterByBuildFeatures
 
 SYSTEM_ADD_ONS_TRANSLATORS =
 	STXTTranslator
-	JPEGTranslator@jpeg	# Beacon: wallpaper
+	BMPTranslator	# Beacon: wallpaper (JPEGTranslator crashes on riscv64)
 ;
 
 SYSTEM_ADD_ONS_LOCALE_CATALOGS =
