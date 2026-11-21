@@ -14,6 +14,17 @@ Haiku, Inc.; it is used here only to describe where the code comes from.
 
 Development is AI-assisted.
 
+## Screenshots
+
+Beacon 0.2 running on an Orange Pi RV (8 GB), captured on the board itself:
+
+<p align="center">
+  <img src="docs/beacon/screenshots/desktop-about.jpg" alt="Beacon desktop with About Beacon, Screen preferences and Tracker showing System Disk" width="860">
+</p>
+<p align="center">
+  <img src="docs/beacon/screenshots/desktop-terminal.jpg" alt="Beacon desktop with Terminal running the SSH server" width="860">
+</p>
+
 ## First target: Orange Pi RV (StarFive JH7110, RISC-V)
 
 | Area | Status |
