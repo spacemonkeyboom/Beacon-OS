@@ -32,6 +32,9 @@
 #include "mmc.h"
 
 
+class Jh7110SysGpio;
+
+
 #define DW_MMC_DRIVER_MODULE_NAME "busses/mmc/dw_mmc/driver_v1"
 
 
@@ -131,6 +134,9 @@ enum {
 	kDwIntSbe			= 1 << 13,
 	kDwIntAcd			= 1 << 14,
 	kDwIntEbe			= 1 << 15,
+	// Beacon: SDIO card interrupt of slot 0 (Linux SDMMC_INT_SDIO(0); the
+	// StarFive glue sets no sdio_id0 offset).
+	kDwIntSdio			= 1 << 16,
 
 	// Linux DW_MCI_DATA_ERROR_FLAGS / DW_MCI_CMD_ERROR_FLAGS. FRUN (FIFO
 	// under/overrun) is added for PIO: it means our FIFO accounting is wrong.
@@ -138,6 +144,8 @@ enum {
 		| kDwIntEbe | kDwIntHle | kDwIntFrun,
 	kDwIntCmdError		= kDwIntRto | kDwIntRcrc | kDwIntRespErr | kDwIntHle,
 	kDwIntAllButCd		= 0xfffffffe,
+	// Clearing RINTSTS before a command must not drop a pending SDIO IRQ.
+	kDwIntAllButCdSdio	= 0xfffefffe,
 };
 
 // CMD
@@ -246,6 +254,16 @@ struct DwMmcConfig {
 	bool			isJh7110;
 	bool			hasStarfiveCompat;
 	char			name[32];
+
+	// Beacon SDIO power sequence (mmc-pwrseq-simple reset-gpios, or the
+	// Orange Pi RV fallback on the JH7110 sdio0, see README.md).
+	int32			resetGpio;			// -1 = none
+	bool			resetActiveLow;
+	bool			resetFromDt;		// pwrseq in DT: always run at init
+	bool			resetHeuristic;		// run only if nothing answered
+	uint32			resetPostDelayMs;	// pwrseq post-power-on-delay-ms
+	uint32			maxKhzSetting;		// driver settings max_clock_khz
+	bool			isJh7110Sdio0;
 };
 
 
@@ -269,6 +287,13 @@ public:
 			void				SetCardType(card_type type);
 			void				TerminateBus();
 
+			// Beacon: SDIO
+			status_t			ExecuteBufferCommand(uint8_t command,
+									uint32_t argument, uint32_t* response,
+									const mmc_buffer_transfer* transfer);
+			void				SetSdioIrqSemaphore(sem_id semaphore);
+			void				EnableSdioIrq(bool enable);
+
 private:
 	// Response kinds, see the SD/eMMC specs (R1..R7).
 	enum ReplyType {
@@ -288,6 +313,7 @@ private:
 		bool			isWrite;
 		generic_io_vec*	vecs;
 		size_t			vecCount;
+		uint8*			buffer;		// kernel virtual buffer instead of vecs
 		size_t			length;
 	};
 
@@ -321,6 +347,10 @@ private:
 									uint8* to, size_t length);
 			void				_RecoverFromDataError();
 			bool				_ProbeForCard();
+			bool				_ProbeSdio(int tries);
+			void				_SdioPowerSequence(const char* why);
+			void				_SetupJh7110Gpio();
+			status_t			_ApplyClockEnable();
 
 private:
 			DwMmcConfig			fConfig;
@@ -345,6 +375,12 @@ private:
 			int32				fTraceIo;
 
 			sem_id				fScanSemaphore;
+			sem_id				fSdioIrqSemaphore;
+			bool				fSdioIrqEnabled;
+			int32				fSdioIrqCount;
+			bool				fNoLowPower;
+			bool				fResetDone;
+			Jh7110SysGpio*		fGpio;
 			card_type			fCardType;
 			uint32				fCurrentHz;
 			uint32				fBusWidth;

@@ -163,6 +163,7 @@ AddNewDriversToPackage display :
 #	display_adapter@x86
 	;
 AddNewDriversToPackage audio hmulti :
+	pwmdac_jh7110@riscv64	# Beacon: JH7110 PWM-DAC headphone jack
 #	virtio_sound
 	;
 AddNewDriversToPackage hyperv :

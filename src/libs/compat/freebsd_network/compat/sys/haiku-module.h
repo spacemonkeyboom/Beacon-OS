@@ -82,6 +82,7 @@ void __haiku_init_hardware(void);
 status_t _fbsd_init_hardware();
 status_t _fbsd_init_hardware_pci(driver_t* drivers[]);
 status_t _fbsd_init_hardware_uhub(driver_t* drivers[]);
+status_t _fbsd_init_hardware_sdio(driver_t* drivers[]);
 status_t _fbsd_init_drivers();
 status_t _fbsd_uninit_drivers();
 
@@ -150,7 +151,7 @@ status_t wlan_close(void*);
 //
 // This generates the same code as HAIKU_FBSD_DRIVERS_GLUE, and additionally generates a
 // __haiku_init_hardware implementation that will call the freebsd compatibility layer
-// initialization function. The supported bus names are pci, uhub (for USB) and simplebus
+// initialization function. The supported bus names are pci, uhub (for USB), sdio and simplebus
 // (for openfirmware, FDT, and similar busses).
 #define HAIKU_FBSD_DRIVER_GLUE(publicname, name, busname)				\
 	extern driver_t* DRIVER_MODULE_NAME(name, busname);					\

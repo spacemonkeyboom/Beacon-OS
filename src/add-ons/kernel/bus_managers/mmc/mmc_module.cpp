@@ -7,6 +7,7 @@
  *		Adrien Destugues, pulkomandy@pulkomandy.tk
  */
 #include "mmc_bus.h"
+#include "sdio_bus.h"
 
 
 #define	MMC_BUS_DEVICE_NAME "bus_managers/mmc_bus/device/v1"
@@ -180,8 +181,13 @@ module_dependency module_dependencies[] = {
 };
 
 
+// Beacon: SDIO function nodes (sdio_module.cpp)
+extern sdio_bus_interface gSdioFunctionModule;
+
+
 module_info* modules[] = {
 	(module_info*)&mmc_bus_controller_module,
 	(module_info*)&mmc_bus_device_module,
+	(module_info*)&gSdioFunctionModule,
 	NULL
 };

@@ -31,6 +31,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	fortune
 	fstrim
 	ftpd
+	hmulti_tone@riscv64	# Beacon: hmulti test tone (JH7110 audio)
 	getarch
 	groupadd
 	groupdel
@@ -173,6 +174,7 @@ SYSTEM_PREFERENCES = [ FFilterByBuildFeatures
 	Input
 	Keymap
 	Locale
+	Media@riscv64		# Beacon: JH7110 audio
 	Network
 	Notifications
 	Screen
@@ -200,6 +202,7 @@ rule HaikuImageGetSystemLibs
 			libdebugger.so@primary
 			libdevice.so
 			libgnu.so
+			libmedia.so@riscv64	# Beacon: JH7110 audio
 			libnetwork.so
 			libpackage.so
 			libtextencoding.so
@@ -227,6 +230,8 @@ SYSTEM_SERVERS = [ FFilterByBuildFeatures
 	input_server
 	keystore_server
 	launch_daemon
+	media_addon_server@riscv64	# Beacon: JH7110 audio
+	media_server@riscv64
 	mount_server
 	net_server
 	notification_server
@@ -281,7 +286,13 @@ SYSTEM_ADD_ONS_LOCALE_CATALOGS =
 	<catalog-addon>plaintext
 ;
 
-SYSTEM_ADD_ONS_MEDIA = ;
+# Beacon: riscv64 (JH7110 PWM-DAC) gets sound in the minimum image. The
+# regular image (which includes this file and adds its own media list) drops
+# these first, see BEACON_MINIMUM_MEDIA in definitions/regular.
+SYSTEM_ADD_ONS_MEDIA = [ FFilterByBuildFeatures
+	hmulti_audio.media_addon@riscv64
+	mixer.media_addon@riscv64
+] ;
 
 SYSTEM_ADD_ONS_MEDIA_PLUGINS =  ;
 
@@ -344,6 +355,14 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 	usb_ncm
 	usb_rndis
 	wb840
+] ;
+
+# Beacon: Orange Pi RV onboard Wi-Fi (AP6256 = BCM43456, SDIO). OpenBSD bwfm
+# port; ships its firmware (data/system/data/firmware/broadcomfullmac).
+SYSTEM_ADD_ONS_DRIVERS_NET += [ FFilterByBuildFeatures
+	riscv64 @{
+		broadcomfullmac
+	}@ # riscv64
 ] ;
 
 SYSTEM_ADD_ONS_DRIVERS_POWER = [ FFilterByBuildFeatures

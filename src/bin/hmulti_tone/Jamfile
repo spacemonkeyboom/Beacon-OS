@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src bin hmulti_tone ;
+
+UsePrivateHeaders audio ;
+
+Application hmulti_tone :
+	hmulti_tone.cpp
+	: root
+;

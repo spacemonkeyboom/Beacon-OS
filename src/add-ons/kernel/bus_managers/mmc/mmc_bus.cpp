@@ -6,6 +6,7 @@
  *		B Krishnan Iyer, krishnaniyer97@gmail.com
  */
 #include "mmc_bus.h"
+#include "sdio.h"
 
 #include <Errors.h>
 
@@ -20,7 +21,8 @@ MMCBus::MMCBus(device_node* node)
 	fStatus(B_OK),
 	fWorkerThread(-1),
 	fActiveDevice(0),
-	fCardType(CARD_TYPE_UNKNOWN)
+	fCardType(CARD_TYPE_UNKNOWN),
+	fSdioCard(NULL)
 {
 	CALLED();
 
@@ -62,6 +64,8 @@ MMCBus::~MMCBus()
 	status_t result;
 	if (fWorkerThread != 0)
 		wait_for_thread(fWorkerThread, &result);
+
+	delete fSdioCard;
 }
 
 
@@ -99,6 +103,80 @@ MMCBus::DoIO(uint16_t rca, uint8_t command, IOOperation* operation,
 	if (status != B_OK)
 		return status;
 	return fController->do_io(fCookie, command, operation, offsetAsSectors);
+}
+
+
+status_t
+MMCBus::ExecuteBufferCommand(uint16_t rca, uint8_t command, uint32_t argument,
+	uint32_t* response, const mmc_buffer_transfer* transfer)
+{
+	if (fController->execute_buffer_command == NULL)
+		return B_NOT_SUPPORTED;
+	status_t status = _ActivateDevice(rca);
+	if (status != B_OK)
+		return status;
+	return fController->execute_buffer_command(fCookie, command, argument,
+		response, transfer);
+}
+
+
+bool
+MMCBus::HostSupportsSdio() const
+{
+	return fController->execute_buffer_command != NULL;
+}
+
+
+bool
+MMCBus::_TrySdio()
+{
+	// Beacon: SDIO cards answer CMD5 (IO_SEND_OP_COND, R4); memory cards do
+	// not. Called with the bus lock held, after CMD0 and CMD8, like Linux
+	// mmc_rescan_try_freq() and OpenBSD sdmmc_io_enable().
+	if (!HostSupportsSdio())
+		return false;
+
+	if (fSdioCard != NULL) {
+		// Rescan: the card is not removable, keep what we have.
+		TRACE_ALWAYS("sdio: rescan, card RCA %#x already enumerated\n",
+			fSdioCard->Rca());
+		return true;
+	}
+
+	uint32_t ocr = 0;
+	status_t status = ExecuteCommand(0, SD_IO_SEND_OP_COND, 0, &ocr);
+	if (status != B_OK) {
+		TRACE("sdio: no answer to CMD5 (%s), not an SDIO card\n",
+			strerror(status));
+		return false;
+	}
+
+	dprintf("sdio: card answers CMD5, OCR %#" B_PRIx32 "\n", ocr);
+	if ((ocr >> 28 & 7) == 0) {
+		dprintf("sdio: card reports no I/O functions; treating it as a "
+			"memory card\n");
+		return false;
+	}
+
+	SdioCard* card = new(std::nothrow) SdioCard(this);
+	if (card == NULL)
+		return true;
+
+	status = card->Enumerate(ocr);
+	if (status != B_OK) {
+		dprintf("sdio: enumeration FAILED: %s\n", strerror(status));
+		delete card;
+		// Do not fall into the SD memory init: it loops on SDIO cards.
+		return true;
+	}
+	fSdioCard = card;
+
+	// Publish without the bus lock: a function driver attaching from the
+	// device manager may call into the bus right away.
+	ReleaseBus();
+	card->PublishFunctions(fNode);
+	AcquireBus();
+	return true;
 }
 
 
@@ -196,6 +274,14 @@ MMCBus::_WorkerThread(void* cookie)
 	snooze(30000);
 
 	while (bus->fStatus != B_SHUTTING_DOWN) {
+		if (bus->fSdioCard != NULL) {
+			// Beacon: an enumerated SDIO card is not removable; a rescan
+			// must not drop it back to 400 kHz and 1 bit.
+			TRACE_ALWAYS("sdio: rescan ignored, SDIO card RCA %#x stays\n",
+				bus->fSdioCard->Rca());
+			bus->_AcquireScanSemaphore();
+			continue;
+		}
 		TRACE("Scanning the bus\n");
 
 		// Use the low speed clock and 1bit bus width for scanning
@@ -220,6 +306,13 @@ MMCBus::_WorkerThread(void* cookie)
 		uint32_t hcs = 1 << 30;
 		uint32_t ocr;
 		status_t status = bus->ExecuteCommand(0, SD_SEND_IF_COND, probe, &response);
+
+		// Beacon: SDIO-only cards (Wi-Fi) answer CMD5 and nothing else of
+		// the memory init. Combo cards: only the I/O part is used for now.
+		if (bus->_TrySdio()) {
+			bus->_AcquireScanSemaphore();
+			continue;
+		}
 		if (status != B_OK) {
 			TRACE("Card does not implement CMD8, may be a V1 SD or MMC card\n");
 			// Do not check for SDHC support in this case

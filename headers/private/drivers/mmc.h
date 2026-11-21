@@ -73,6 +73,11 @@ enum SD_COMMANDS {
 
 	// I/O mode commands, class 9
 	SD_IO_ABORT = 52,
+
+	// Beacon: SDIO commands (SDIO Simplified Specification v3.00, sec. 5)
+	SD_IO_SEND_OP_COND = 5,		// R4
+	SD_IO_RW_DIRECT = 52,		// R5
+	SD_IO_RW_EXTENDED = 53,		// R5, data
 };
 
 
@@ -82,6 +87,14 @@ enum SDHCI_APPLICATION_COMMANDS {
 	SD_SEND_OP_COND = 41,
 };
 
+
+// Beacon: data phase of execute_buffer_command()
+typedef struct mmc_buffer_transfer {
+	void*		buffer;			// kernel virtual address
+	uint32_t	block_size;		// bytes per block, 1..2048
+	uint32_t	block_count;	// 1..511
+	bool		is_write;
+} mmc_buffer_transfer;
 
 // Interface between mmc_bus and underlying implementation (sdhci_pci or any
 // other thing that can execute mmc commands)
@@ -105,7 +118,22 @@ typedef struct mmc_bus_interface {
 		// Set the data bus width to 1, 4 or 8 bit mode.
 	void (*terminate_bus)(void* controller);
 	void (*set_card_type)(void* controller, card_type type);
+
+	// Beacon: SDIO support. Optional, hosts without SDIO leave these NULL.
+	status_t (*execute_buffer_command)(void* controller, uint8_t command,
+		uint32_t argument, uint32_t* result,
+		const struct mmc_buffer_transfer* data);
+		// Execute a command with a data phase to or from a kernel virtual
+		// buffer (CMD53). Lengths need not be a multiple of 4.
+	void (*set_sdio_irq_semaphore)(void* controller, sem_id sem);
+		// The host releases this semaphore (B_DO_NOT_RESCHEDULE) from its
+		// interrupt handler when the card signals an SDIO interrupt, after
+		// masking the SDIO interrupt in the host.
+	void (*enable_sdio_irq)(void* controller, bool enable);
+		// Unmask (true) or mask the host's SDIO card interrupt. Also used to
+		// re-arm it after the handlers have run.
 } mmc_bus_interface;
+
 
 
 // Interface between mmc device driver (mmc_disk, sdio drivers, ...) and mmc_bus

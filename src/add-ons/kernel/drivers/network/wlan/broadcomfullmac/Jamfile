@@ -1,0 +1,34 @@
+SubDir HAIKU_TOP src add-ons kernel drivers network wlan broadcomfullmac ;
+
+# Beacon: OpenBSD bwfm(4) (Broadcom FullMAC, SDIO attachment) on the
+# OpenBSD wlan compatibility layer. See README.md and THIRD_PARTY.md.
+
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat openbsd_network compat ] : true ;
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat openbsd_wlan ] : true ;
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat freebsd_network compat ] : true ;
+UsePrivateHeaders net system drivers ;
+UsePrivateKernelHeaders ;
+
+SubDirCcFlags [ FDefines _KERNEL=1 _XOPEN_SOURCE ]
+	-Wno-unused -Wno-sign-compare ;
+
+UseHeaders [ FDirName $(SUBDIR) ] : true ;
+
+SEARCH_SOURCE += [ FDirName $(SUBDIR) dev ic ] ;
+SEARCH_SOURCE += [ FDirName $(SUBDIR) dev sdmmc ] ;
+
+KernelAddon broadcomfullmac :
+	bwfm.c
+	if_bwfm_sdio.c
+	sdmmc_io_haiku.c
+	glue.c
+	:
+	openbsd_wlan.a
+	freebsd_sdio.a
+	libfreebsd_network.a
+	;
+
+# Firmware, NVRAM and licences (see README.md); extracted into
+# /system/data/firmware/broadcomfullmac/ by build/jam/packages/Haiku.
+HAIKU_WIFI_FIRMWARE_ARCHIVE on broadcomfullmac = brcmfmac43456-sdio-beacon-1.tgz ;
+HAIKU_WIFI_FIRMWARE_DO_EXTRACT on broadcomfullmac = true ;

@@ -25,9 +25,8 @@ been run on hardware yet.
 ## Attach
 
 * `supports_device` takes FDT nodes with a matching compatible string and
-  `status = "okay"` (or no status). It skips slots that are clearly SDIO-only:
-  `mmc-pwrseq`, both `no-sd` and `no-mmc`, or a child DT node with a
-  compatible string (an SDIO function such as Wi-Fi).
+  `status = "okay"` (or no status). SDIO-only slots attach too (Beacon SDIO,
+  see below).
 * `register_device` registers one node with `B_DEVICE_FIXED_CHILD` set to
   the MMC bus manager, plus DMA restrictions for `mmc_disk`'s DMAResource:
   at most 512 blocks per operation and at most 64 segments.
@@ -93,6 +92,53 @@ The scan semaphore is released only if something answers. This keeps
 `mmc_bus` out of its endless ACMD41 loop on an empty slot or an SDIO-only
 device. Hot-plug is not supported in that mode: insert the card and reboot.
 On other boards, the `CDETECT` register and its interrupt are used.
+
+## SDIO (Beacon, 2026-11-20)
+
+The bus manager side is described in
+`src/add-ons/kernel/bus_managers/mmc/README_SDIO.md`. Host-side changes:
+
+* Reply types: CMD5 is R4 (no CRC check), CMD52/CMD53 are R5 (R1 shape). A
+  CMD52 write to CCCR ABORT (0x06) gets the STOP_ABORT flag, like Linux.
+* `execute_buffer_command`: CMD53 data to or from a kernel virtual buffer.
+  BLKSIZ is the SDIO block size (1-2048) and BYTCNT is size x count. The PIO
+  loop handles lengths that are not a multiple of the FIFO width: the last
+  FIFO word carries the tail and is zero padded on writes. There is no CMD12,
+  the bus manager aborts through CCCR ABORT.
+* SDIO interrupt: RINTSTS/INTMASK bit 16 (slot 0). The ISR acks it, masks it
+  and releases the bus manager's semaphore. `enable_sdio_irq` unmasks it.
+  RINTSTS clears before commands leave bit 16 alone.
+* `set_card_type(CARD_TYPE_SDIO)` turns off the CLKENA low-power gate: the
+  card needs a running clock to signal its interrupt.
+* Probe without card detect: CMD52 I/O reset, CMD0, CMD8, **CMD5** first,
+  then the SD (CMD55) and MMC (CMD1) probes as before.
+
+### Wi-Fi reset GPIO (power sequence)
+
+`Jh7110Gpio.{h,cpp}` is a minimal SYS GPIO helper (not a GPIO driver). It
+maps 0x13040000, logs pins and drives one pin as a plain output.
+
+* **Mainline DT**: `mmc-pwrseq` -> `mmc-pwrseq-simple` -> `reset-gpios =
+  <&sysgpio 62 GPIO_ACTIVE_LOW>` (optional `post-power-on-delay-ms`). This
+  runs at controller init: reset asserted 50 ms, released, then
+  max(DT delay, 10 ms), then the 80 init clocks go with the next command.
+  CMD5 is retried 25 times, 20 ms apart.
+* **Vendor U-Boot DT** (what Haiku gets on the Orange Pi RV today: the
+  VisionFive 2 DT, sdio0 described as 8-bit eMMC, no pwrseq). On the JH7110
+  sdio0 only: if nothing answers CMD5, CMD55 or CMD1, the driver runs the
+  same sequence on GPIO62 (active low) and probes for SDIO again. A
+  VisionFive 2 eMMC answers CMD1 first, so its GPIO62 is never touched. A
+  VisionFive 2 *without* eMMC would get GPIO62 driven high; disable that with
+  `jh7110_sdio0_reset_gpio none` in the settings file.
+* At init on the JH7110 sdio0, firmware's state of GPIO62 (WL_REG_ON),
+  GPIO21 (WL_HOST_WAKE, unused) and the 11 dedicated SD0 pads is logged
+  ("jh7110_gpio:" lines).
+
+The PCIe driver (PERST# on GPIO26/28) uses the same block, but different
+DOUT/DOEN words, so their read-modify-writes cannot collide.
+
+Settings file `~/config/settings/kernel/drivers/dw_mmc`:
+`max_clock_khz <kHz>`, `jh7110_sdio0_reset_gpio <pin|none>`.
 
 ## Limits
 

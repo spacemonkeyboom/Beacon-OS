@@ -14,16 +14,20 @@
 
 
 #include "DwMmc.h"
+#include "Jh7110Gpio.h"
 
 #include <new>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <bus/FDT.h>
+#include <driver_settings.h>
 
 
 #define INFO(x...)	dprintf("dw_mmc: " x)
 #define ERROR(x...)	dprintf("dw_mmc: ERROR: " x)
+#define SDIO_INFO(x...)	dprintf("sdio: " x)
 
 
 device_manager_info* gDeviceManager;
@@ -100,34 +104,6 @@ has_compatible(fdt_device_module_info* module, fdt_device* device,
 }
 
 
-static bool
-has_sdio_function_child(device_node* fdtNode)
-{
-	// An SDIO function (Wi-Fi etc.) described as a child DT node, as on the
-	// Orange Pi RV's mmc0 (AP6256). The MMC stack only handles memory cards.
-	device_attr attrs[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "fdt" }},
-		{}
-	};
-	device_node* child = NULL;
-	bool found = false;
-	while (!found
-		&& gDeviceManager->get_next_child_node(fdtNode, attrs, &child)
-			== B_OK) {
-		const char* compatible = NULL;
-		if (gDeviceManager->get_attr_string(child, "fdt/compatible",
-				&compatible, false) == B_OK) {
-			found = true;
-		}
-	}
-	// get_next_child_node() releases the previous node itself, including
-	// when it runs out; only the node we stopped at is still referenced.
-	if (found)
-		gDeviceManager->put_node(child);
-	return found;
-}
-
-
 // #pragma mark - driver hooks
 
 
@@ -160,16 +136,8 @@ dw_mmc_supports_device(device_node* parent)
 	if (okay != NULL && strcmp(okay, "okay") != 0 && strcmp(okay, "ok") != 0)
 		return 0.0f;
 
-	const char* name = module->get_name(device);
-	if (has_prop(module, device, "mmc-pwrseq")
-		|| (has_prop(module, device, "no-sd")
-			&& has_prop(module, device, "no-mmc"))
-		|| has_sdio_function_child(parent)) {
-		INFO("%s: SDIO-only slot, not attaching\n",
-			name != NULL ? name : "?");
-		return 0.0f;
-	}
-
+	// Beacon: SDIO-only slots (mmc-pwrseq, a wifi@ child node) attach too
+	// now; the MMC bus manager enumerates SDIO cards.
 	return 0.8f;
 }
 
@@ -197,6 +165,145 @@ dw_mmc_register_device(device_node* parent)
 }
 
 
+// Mirrors the private struct fdt_device of bus_managers/fdt/fdt_module.cpp.
+// fdt_device_get_prop()/get_reg() only use ->node (its "fdt/node"
+// attribute), so this lets us read properties of a DT node that has no driver
+// attached (an mmc-pwrseq or GPIO controller node) without initialising it.
+struct beacon_fdt_device_alias {
+	device_node*	node;
+	device_node*	bus;
+};
+
+
+static device_node*
+node_by_phandle(fdt_device_module_info* module, fdt_device* device,
+	uint32 phandle)
+{
+	device_node* busNode = module->get_bus(device);
+	fdt_bus_module_info* busModule;
+	struct fdt_bus* bus;
+	if (busNode == NULL || gDeviceManager->get_driver(busNode,
+			(driver_module_info**)&busModule, (void**)&bus) != B_OK) {
+		return NULL;
+	}
+	return busModule->node_by_phandle(bus, (int)phandle);
+}
+
+
+static uint32
+be32_at(const void* prop, int index)
+{
+	const uint8* bytes = (const uint8*)prop + 4 * index;
+	return ((uint32)bytes[0] << 24) | ((uint32)bytes[1] << 16)
+		| ((uint32)bytes[2] << 8) | bytes[3];
+}
+
+
+static void
+read_pwrseq(fdt_device_module_info* module, fdt_device* device,
+	DwMmcConfig& config)
+{
+	// mmc-pwrseq = <&wifi_pwrseq>; wifi_pwrseq: mmc-pwrseq-simple with
+	// reset-gpios = <&sysgpio 62 GPIO_ACTIVE_LOW> (Linux
+	// jh7110-orangepi-rv.dts, bindings mmc-pwrseq-simple.yaml).
+	int length = 0;
+	const void* prop = module->get_prop(device, "mmc-pwrseq", &length);
+	if (prop == NULL || length < 4)
+		return;
+
+	device_node* pwrseqNode = node_by_phandle(module, device,
+		be32_at(prop, 0));
+	if (pwrseqNode == NULL) {
+		ERROR("%s: mmc-pwrseq phandle not found\n", config.name);
+		return;
+	}
+	beacon_fdt_device_alias alias = { pwrseqNode, NULL };
+	fdt_device* pwrseq = (fdt_device*)&alias;
+	if (!has_compatible(module, pwrseq, "mmc-pwrseq-simple")) {
+		ERROR("%s: mmc-pwrseq is not mmc-pwrseq-simple; ignored\n",
+			config.name);
+		return;
+	}
+
+	const void* gpios = module->get_prop(pwrseq, "reset-gpios", &length);
+	if (gpios == NULL || length < 12) {
+		SDIO_INFO("%s: mmc-pwrseq-simple without reset-gpios\n",
+			config.name);
+		return;
+	}
+	if (length > 12) {
+		SDIO_INFO("%s: mmc-pwrseq has %d reset GPIOs, using the first\n",
+			config.name, length / 12);
+	}
+
+	device_node* gpioNode = node_by_phandle(module, device, be32_at(gpios, 0));
+	uint64 gpioBase = 0;
+	uint64 gpioSize = 0;
+	if (gpioNode != NULL) {
+		beacon_fdt_device_alias gpioAlias = { gpioNode, NULL };
+		module->get_reg((fdt_device*)&gpioAlias, 0, &gpioBase, &gpioSize);
+	}
+	if (gpioBase != kJh7110SysGpioPhys) {
+		ERROR("%s: reset GPIO controller at %#" B_PRIx64 " is not the JH7110 "
+			"sysgpio; cannot drive it\n", config.name, gpioBase);
+		return;
+	}
+
+	config.resetGpio = (int32)be32_at(gpios, 1);
+	config.resetActiveLow = (be32_at(gpios, 2) & 1) != 0;
+	config.resetFromDt = true;
+	config.resetHeuristic = false;
+
+	const void* delay = module->get_prop(pwrseq, "post-power-on-delay-ms",
+		&length);
+	if (delay != NULL && length >= 4)
+		config.resetPostDelayMs = be32_at(delay, 0);
+	SDIO_INFO("%s: DT mmc-pwrseq-simple: reset GPIO%" B_PRId32 " active %s, "
+		"post-power-on-delay %" B_PRIu32 " ms\n", config.name,
+		config.resetGpio, config.resetActiveLow ? "low" : "high",
+		config.resetPostDelayMs);
+}
+
+
+static void
+read_settings(DwMmcConfig& config)
+{
+	// Optional ~/config/settings/kernel/drivers/dw_mmc:
+	//   max_clock_khz 25000          cap every dw_mmc bus clock
+	//   jh7110_sdio0_reset_gpio 62   reset GPIO for the JH7110 sdio0 (Wi-Fi)
+	//                                when the DT has no mmc-pwrseq; "none"
+	//                                disables the Orange Pi RV fallback
+	void* handle = load_driver_settings("dw_mmc");
+	if (handle == NULL)
+		return;
+
+	const char* value = get_driver_parameter(handle, "max_clock_khz", NULL,
+		NULL);
+	if (value != NULL) {
+		config.maxKhzSetting = strtoul(value, NULL, 0);
+		INFO("%s: settings: max_clock_khz %" B_PRIu32 "\n", config.name,
+			config.maxKhzSetting);
+	}
+
+	if (config.isJh7110Sdio0 && !config.resetFromDt) {
+		value = get_driver_parameter(handle, "jh7110_sdio0_reset_gpio", NULL,
+			NULL);
+		if (value != NULL) {
+			if (strcmp(value, "none") == 0)
+				config.resetGpio = -1;
+			else {
+				config.resetGpio = strtol(value, NULL, 0);
+				config.resetActiveLow = true;
+			}
+			config.resetHeuristic = config.resetGpio >= 0;
+			SDIO_INFO("%s: settings: jh7110_sdio0_reset_gpio %s\n",
+				config.name, value);
+		}
+	}
+	unload_driver_settings(handle);
+}
+
+
 static status_t
 read_config(device_node* fdtNode, DwMmcConfig& config)
 {
@@ -206,6 +313,7 @@ read_config(device_node* fdtNode, DwMmcConfig& config)
 		return B_ERROR;
 
 	memset(&config, 0, sizeof(config));
+	config.resetGpio = -1;
 
 	uint64 base = 0;
 	uint64 size = 0;
@@ -273,6 +381,21 @@ read_config(device_node* fdtNode, DwMmcConfig& config)
 	// The CDETECT pin is only trustworthy if nothing says otherwise. The
 	// JH7110 boards route card detect to a GPIO (cd-gpios in the Linux DT,
 	// nothing at all in the vendor U-Boot DT), so probe by command there.
+	// Beacon: SDIO power sequence. The mainline DT describes it with
+	// mmc-pwrseq. The vendor U-Boot DT that Haiku gets on the Orange Pi RV is
+	// the VisionFive 2 one (sdio0 = 8-bit eMMC, no pwrseq), so on the JH7110
+	// sdio0 fall back to the Orange Pi RV WL_REG_ON (GPIO62, active low), but
+	// only if nothing answers on the bus first (a VisionFive 2 eMMC answers
+	// CMD1, so its GPIO62 is never touched).
+	config.isJh7110Sdio0 = config.isJh7110 && base == kJh7110Sdio0Base;
+	read_pwrseq(module, device, config);
+	if (config.isJh7110Sdio0 && !config.resetFromDt) {
+		config.resetGpio = 62;
+		config.resetActiveLow = true;
+		config.resetHeuristic = true;
+	}
+	read_settings(config);
+
 	config.cdUsable = !config.isJh7110
 		&& !has_prop(module, device, "cd-gpios")
 		&& !has_prop(module, device, "broken-cd")
@@ -369,6 +492,29 @@ dw_mmc_set_card_type(void* controller, card_type type)
 }
 
 
+static status_t
+dw_mmc_execute_buffer_command(void* controller, uint8_t command,
+	uint32_t argument, uint32_t* result, const mmc_buffer_transfer* data)
+{
+	return ((DwMmcHost*)controller)->ExecuteBufferCommand(command, argument,
+		result, data);
+}
+
+
+static void
+dw_mmc_set_sdio_irq_semaphore(void* controller, sem_id semaphore)
+{
+	((DwMmcHost*)controller)->SetSdioIrqSemaphore(semaphore);
+}
+
+
+static void
+dw_mmc_enable_sdio_irq(void* controller, bool enable)
+{
+	((DwMmcHost*)controller)->EnableSdioIrq(enable);
+}
+
+
 mmc_bus_interface gDwMmcBusModule = {
 	.info = {
 		.info = {
@@ -387,6 +533,10 @@ mmc_bus_interface gDwMmcBusModule = {
 	.set_bus_width = dw_mmc_set_bus_width,
 	.terminate_bus = dw_mmc_terminate_bus,
 	.set_card_type = dw_mmc_set_card_type,
+
+	.execute_buffer_command = dw_mmc_execute_buffer_command,
+	.set_sdio_irq_semaphore = dw_mmc_set_sdio_irq_semaphore,
+	.enable_sdio_irq = dw_mmc_enable_sdio_irq,
 };
 
 

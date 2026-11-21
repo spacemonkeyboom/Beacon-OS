@@ -6,4 +6,7 @@ UsePrivateHeaders drivers ;
 KernelAddon mmc :
 	mmc_module.cpp
 	mmc_bus.cpp
+	# Beacon: SDIO (sdio.cpp is ISC, from OpenBSD; see THIRD_PARTY.md)
+	sdio.cpp
+	sdio_module.cpp
 	;

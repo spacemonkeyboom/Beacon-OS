@@ -40,10 +40,12 @@
 #include <vm/vm.h>
 
 #include "IORequest.h"
+#include "Jh7110Gpio.h"
 
 
 #define INFO(x...)	dprintf("dw_mmc: " x)
 #define ERROR(x...)	dprintf("dw_mmc: ERROR: " x)
+#define SDIO_INFO(x...)	dprintf("sdio: " x)
 
 
 // How many commands are logged one by one after boot (bring-up aid).
@@ -58,6 +60,18 @@ static const bigtime_t kInterruptFallbackPoll = 20000;
 static const bigtime_t kSpinBeforeSleep = 30;
 
 static const uint32 kBlockSize = 512;
+
+// Beacon SDIO power sequence. Linux mmc_power_up() holds the pwrseq reset
+// for power_delay_ms (10 ms) and waits 10 ms more after releasing it; we hold
+// the reset longer so a chip left running by a previous boot fully resets.
+static const bigtime_t kSdioResetHold = 50000;
+static const uint32 kSdioMinPostDelayMs = 10;
+// CMD5 inquiry retries after releasing the reset, 20 ms apart.
+static const int kSdioProbeTries = 25;
+// SDIO CCCR ABORT register and its RES (I/O reset) bit.
+static const uint32 kSdioCccrAbort = 0x06;
+static const uint32 kSdioAbortRes = 0x08;
+static const uint32 kSdioMaxBlockSize = 2048;
 
 
 // #pragma mark - MMIO access
@@ -125,6 +139,12 @@ DwMmcHost::DwMmcHost()
 	fTraceCommands(kTraceCommandBudget),
 	fTraceIo(kTraceIoBudget),
 	fScanSemaphore(-1),
+	fSdioIrqSemaphore(-1),
+	fSdioIrqEnabled(false),
+	fSdioIrqCount(0),
+	fNoLowPower(false),
+	fResetDone(false),
+	fGpio(NULL),
 	fCardType(CARD_TYPE_UNKNOWN),
 	fCurrentHz(0),
 	fBusWidth(1),
@@ -148,6 +168,7 @@ DwMmcHost::~DwMmcHost()
 		remove_io_interrupt_handler(fConfig.irq, _InterruptHandler, this);
 	if (fRegsArea >= 0)
 		delete_area(fRegsArea);
+	delete fGpio;
 	mutex_destroy(&fLock);
 }
 
@@ -359,6 +380,11 @@ DwMmcHost::Init(const DwMmcConfig& config)
 	_Write(kDwIntmask, fConfig.cdUsable ? (uint32)kDwIntCd : 0);
 	_Write(kDwCtrl, _Read(kDwCtrl) | kDwCtrlIntEnable);
 
+	// Beacon: SDIO power sequence (Wi-Fi reset GPIO) and pin logging.
+	_SetupJh7110Gpio();
+	if (fConfig.resetGpio >= 0 && fConfig.resetFromDt)
+		_SdioPowerSequence("mmc-pwrseq in DT");
+
 	INFO("%s: ready, ciu %" B_PRIu32 " Hz, max %" B_PRIu32 " Hz, bus width %"
 		B_PRIu32 ", FIFO %" B_PRIu32 " x %" B_PRIu32 " bytes, irq %" B_PRIu64
 		", card detect %s\n", fConfig.name, fConfig.busHz, fConfig.maxHz,
@@ -432,6 +458,8 @@ DwMmcHost::_SetClockHz(uint32 hz)
 	uint32 maxHz = fConfig.maxHz != 0 ? std::min(fConfig.maxHz, busHz) : busHz;
 	if (hz > maxHz)
 		hz = maxHz;
+	if (fConfig.maxKhzSetting != 0 && hz > fConfig.maxKhzSetting * 1000)
+		hz = fConfig.maxKhzSetting * 1000;
 	if (hz == fCurrentHz)
 		return B_OK;
 
@@ -459,8 +487,9 @@ DwMmcHost::_SetClockHz(uint32 hz)
 		return status;
 
 	// Low-power mode stops the card clock while idle; fine for SD/eMMC
-	// memory cards (Linux only turns it off for SDIO).
-	_Write(kDwClkena, kDwClkenEnable | kDwClkenLowPower);
+	// memory cards. Linux turns it off for SDIO interrupts
+	// (dw_mci_prepare_sdio_irq), we turn it off for any SDIO card.
+	_Write(kDwClkena, kDwClkenEnable | (fNoLowPower ? 0 : kDwClkenLowPower));
 	status = _UpdateClockRegisters();
 	if (status != B_OK)
 		return status;
@@ -571,9 +600,22 @@ DwMmcHost::_HandleInterrupt()
 	if (pending == 0)
 		return idsts != 0 ? B_HANDLED_INTERRUPT : B_UNHANDLED_INTERRUPT;
 
+	// Beacon: SDIO card interrupt (Linux dw_mci_interrupt): ack, mask until
+	// the bus manager's handlers have run, wake the bus manager's thread.
+	if ((pending & kDwIntSdio) != 0) {
+		_Write(kDwRintsts, kDwIntSdio);
+		{
+			SpinLocker locker(fIntmaskLock);
+			_Write(kDwIntmask, _Read(kDwIntmask) & ~(uint32)kDwIntSdio);
+		}
+		atomic_add(&fSdioIrqCount, 1);
+		if (fSdioIrqSemaphore >= 0)
+			release_sem_etc(fSdioIrqSemaphore, 1, B_DO_NOT_RESCHEDULE);
+	}
+
 	// Mask what fired so the line drops; the waiting thread clears RINTSTS
 	// and re-enables what it needs next.
-	uint32 events = pending & ~(uint32)kDwIntCd;
+	uint32 events = pending & ~(uint32)(kDwIntCd | kDwIntSdio);
 	if (events != 0) {
 		SpinLocker locker(fIntmaskLock);
 		_Write(kDwIntmask, _Read(kDwIntmask) & ~events);
@@ -632,6 +674,12 @@ DwMmcHost::_ReplyTypeFor(uint8_t command, uint32_t argument) const
 		case SD_WRITE_SINGLE_BLOCK:
 		case SD_WRITE_MULTIPLE_BLOCKS:
 			return kReplyR1;
+		// Beacon: SDIO. R4 has no valid CRC (like R3); R5 has the R1 shape.
+		case SD_IO_SEND_OP_COND:
+			return kReplyR3;
+		case SD_IO_RW_DIRECT:
+		case SD_IO_RW_EXTENDED:
+			return kReplyR1;
 		default:
 			return kReplyInvalid;
 	}
@@ -650,7 +698,10 @@ DwMmcHost::_ExecuteCommandLocked(uint8_t command, uint32_t argument,
 
 	// Command register flags, Linux dw_mci_prepare_command().
 	uint32 cmdr = (command & kDwCmdIndexMask) | kDwCmdStart | kDwCmdUseHoldReg;
-	if (command == GO_IDLE_STATE || command == SD_STOP_TRANSMISSION)
+	// Linux dw_mci_prepare_command(): a CMD52 write to CCCR ABORT is a stop.
+	if (command == GO_IDLE_STATE || command == SD_STOP_TRANSMISSION
+		|| (command == SD_IO_RW_DIRECT
+			&& ((argument >> 9) & 0x1ffff) == kSdioCccrAbort))
 		cmdr |= kDwCmdStopAbort;
 	else if (data != NULL)
 		cmdr |= kDwCmdPrvDatWait;
@@ -699,7 +750,7 @@ DwMmcHost::_ExecuteCommandLocked(uint8_t command, uint32_t argument,
 		spin(1);
 	}
 
-	_Write(kDwRintsts, kDwIntAllButCd);
+	_Write(kDwRintsts, kDwIntAllButCdSdio);
 	_Write(kDwCmdarg, argument);
 	_Write(kDwCmd, cmdr);
 
@@ -784,7 +835,7 @@ DwMmcHost::_RecoverFromDataError()
 	// clear interrupts, then reload the clock registers into the CIU.
 	if (!_ResetController(kDwCtrlReset | kDwCtrlFifoReset))
 		ERROR("%s: recovery reset failed\n", fConfig.name);
-	_Write(kDwRintsts, kDwIntAllButCd);
+	_Write(kDwRintsts, kDwIntAllButCdSdio);
 	_UpdateClockRegisters();
 }
 
@@ -868,8 +919,12 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 {
 	// FIFO PIO, after Linux dw_mci_read_data_pio()/dw_mci_write_data_pio()
 	// and U-Boot dwmci_data_transfer(), but run from the calling thread.
+	// Beacon: the length need not be a multiple of the FIFO width (SDIO
+	// CMD53 byte mode). The last FIFO entry then carries the tail bytes
+	// (Linux dw_mci_pull_final_bytes); on writes it is zero padded.
 	size_t vecIndex = 0;
 	size_t vecOffset = 0;
+	size_t bufferOffset = 0;
 	size_t remaining = data.length;
 	const uint32 width = fFifoWidth;
 	const size_t bounceEntries = sizeof(fBounce) / width;
@@ -882,16 +937,23 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 			? (fifoCount < fFifoDepth ? fFifoDepth - fifoCount : 0)
 			: fifoCount;
 		entries = std::min(entries, bounceEntries);
-		entries = std::min(entries, remaining / width);
+		entries = std::min(entries, (remaining + width - 1) / width);
 
 		if (entries > 0) {
-			size_t bytes = entries * width;
+			size_t bytes = std::min(entries * width, remaining);
 			status_t status = B_OK;
 			if (data.isWrite) {
-				status = _CopyFromVecs(data, vecIndex, vecOffset, bounce,
-					bytes);
-				if (status != B_OK)
-					return status;
+				if (bytes < entries * width)
+					memset(bounce + bytes, 0, entries * width - bytes);
+				if (data.buffer != NULL) {
+					memcpy(bounce, data.buffer + bufferOffset, bytes);
+					bufferOffset += bytes;
+				} else {
+					status = _CopyFromVecs(data, vecIndex, vecOffset, bounce,
+						bytes);
+					if (status != B_OK)
+						return status;
+				}
 				io_barrier_before_write();
 				if (width == 8) {
 					for (size_t i = 0; i < entries; i++)
@@ -909,9 +971,15 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 						((uint32*)bounce)[i] = *(volatile uint32*)fFifo;
 				}
 				io_barrier_after_read();
-				status = _CopyToVecs(data, vecIndex, vecOffset, bounce, bytes);
-				if (status != B_OK)
-					return status;
+				if (data.buffer != NULL) {
+					memcpy(data.buffer + bufferOffset, bounce, bytes);
+					bufferOffset += bytes;
+				} else {
+					status = _CopyToVecs(data, vecIndex, vecOffset, bounce,
+						bytes);
+					if (status != B_OK)
+						return status;
+				}
 			}
 			remaining -= bytes;
 			continue;
@@ -999,6 +1067,7 @@ DwMmcHost::DoIO(uint8_t command, IOOperation* operation, bool offsetAsSectors)
 	data.isWrite = isWrite;
 	data.vecs = operation->Vecs();
 	data.vecCount = operation->VecCount();
+	data.buffer = NULL;
 	data.length = (size_t)length;
 
 	bool multiBlock = command == SD_READ_MULTIPLE_BLOCKS
@@ -1106,6 +1175,124 @@ DwMmcHost::SetCardType(card_type type)
 {
 	MutexLocker locker(fLock);
 	fCardType = type;
+
+	if (type == CARD_TYPE_SDIO && !fNoLowPower) {
+		// Low-power mode stops the card clock when idle, and then the card
+		// cannot signal its interrupt (Linux dw_mci_prepare_sdio_irq()).
+		fNoLowPower = true;
+		if (fCurrentHz != 0)
+			_ApplyClockEnable();
+		SDIO_INFO("%s: SDIO card: card clock low-power gating off\n",
+			fConfig.name);
+	}
+}
+
+
+status_t
+DwMmcHost::_ApplyClockEnable()
+{
+	_Write(kDwClkena, kDwClkenEnable | (fNoLowPower ? 0 : kDwClkenLowPower));
+	return _UpdateClockRegisters();
+}
+
+
+bool
+DwMmcHost::_ProbeSdio(int tries)
+{
+	// Linux mmc_rescan_try_freq() order: SDIO I/O reset (CMD52 write of RES
+	// to CCCR ABORT), CMD0, CMD8, then CMD5 with argument 0 (inquiry). Only
+	// SDIO cards answer CMD5. An unselected card does not answer the CMD52;
+	// that timeout is expected.
+	uint32_t response[4] = {};
+	_ExecuteCommandLocked(SD_IO_RW_DIRECT, (1u << 31) | (kSdioCccrAbort << 9)
+		| kSdioAbortRes, response, NULL);
+	_ExecuteCommandLocked(GO_IDLE_STATE, 0, NULL, NULL);
+	snooze(2000);
+	_ExecuteCommandLocked(SD_SEND_IF_COND, 0x1aa, response, NULL);
+
+	status_t status = B_ERROR;
+	for (int i = 0; i < tries; i++) {
+		status = _ExecuteCommandLocked(SD_IO_SEND_OP_COND, 0, response, NULL);
+		if (status == B_OK) {
+			uint32 ocr = response[0];
+			SDIO_INFO("%s: card answers CMD5 (try %d): OCR %#" B_PRIx32
+				", %" B_PRIu32 " I/O function(s), memory %s\n", fConfig.name,
+				i + 1, ocr, (ocr >> 28) & 7,
+				(ocr & (1u << 27)) != 0 ? "present" : "absent");
+			return true;
+		}
+		if (i + 1 < tries)
+			snooze(20000);
+	}
+	SDIO_INFO("%s: no answer to CMD5 after %d tr%s (%s)\n", fConfig.name,
+		tries, tries == 1 ? "y" : "ies", strerror(status));
+	return false;
+}
+
+
+void
+DwMmcHost::_SdioPowerSequence(const char* why)
+{
+	// Linux pwrseq_simple + mmc_power_up(): reset asserted, power stable,
+	// reset released, clock running, wait. VMMC/VQMMC are always on on the
+	// Orange Pi RV and PWREN is already set.
+	if (fGpio == NULL || fConfig.resetGpio < 0)
+		return;
+
+	bool assertLevel = !fConfig.resetActiveLow;
+	uint32 postDelay = fConfig.resetPostDelayMs > kSdioMinPostDelayMs
+		? fConfig.resetPostDelayMs : kSdioMinPostDelayMs;
+	SDIO_INFO("%s: power sequence (%s): GPIO%" B_PRId32 " reset asserted "
+		"(%s) for %" B_PRId64 " ms, then released, then %" B_PRIu32 " ms\n",
+		fConfig.name, why, fConfig.resetGpio, assertLevel ? "HIGH" : "LOW",
+		kSdioResetHold / 1000, postDelay);
+
+	fGpio->SetOutput(fConfig.resetGpio, assertLevel);
+	snooze(kSdioResetHold);
+	fGpio->SetOutput(fConfig.resetGpio, !assertLevel);
+	snooze(postDelay * 1000);
+
+	// The card was just powered up: send the 80 init clocks again.
+	fSendInit = true;
+	fResetDone = true;
+	fGpio->LogPin(fConfig.resetGpio, "Wi-Fi reset, after power sequence");
+}
+
+
+void
+DwMmcHost::_SetupJh7110Gpio()
+{
+	// Read-only pin logging on the JH7110 sdio0 (the Orange Pi RV Wi-Fi),
+	// plus the reset line if we drive one.
+	if (!fConfig.isJh7110Sdio0 && fConfig.resetGpio < 0)
+		return;
+
+	fGpio = new(std::nothrow) Jh7110SysGpio();
+	if (fGpio == NULL || fGpio->Init(kJh7110SysGpioPhys) != B_OK) {
+		delete fGpio;
+		fGpio = NULL;
+		if (fConfig.resetGpio >= 0) {
+			ERROR("%s: no sysgpio access, cannot drive reset GPIO%" B_PRId32
+				"\n", fConfig.name, fConfig.resetGpio);
+		}
+		return;
+	}
+
+	if (fConfig.isJh7110Sdio0) {
+		SDIO_INFO("%s: firmware pin state for the Wi-Fi slot:\n",
+			fConfig.name);
+		fGpio->LogPin(62, "WL_REG_ON on Orange Pi RV");
+		fGpio->LogPin(21, "WL_HOST_WAKE (OOB IRQ, unused)");
+		fGpio->LogSd0Pads();
+	}
+	if (fConfig.resetGpio >= 0) {
+		SDIO_INFO("%s: reset GPIO%" B_PRId32 " active %s, %s\n", fConfig.name,
+			fConfig.resetGpio, fConfig.resetActiveLow ? "low" : "high",
+			fConfig.resetFromDt ? "from DT mmc-pwrseq"
+				: "board fallback, used only if no card answers");
+		if (fConfig.resetGpio != 62 || !fConfig.isJh7110Sdio0)
+			fGpio->LogPin(fConfig.resetGpio, "SDIO reset");
+	}
 }
 
 
@@ -1114,10 +1301,14 @@ DwMmcHost::_ProbeForCard()
 {
 	// Without a usable card-detect signal (JH7110 SD slots use a GPIO we do
 	// not drive), ask the bus whether anything answers before letting the
-	// MMC bus manager scan: its scan loops forever on an empty slot or an
-	// SDIO-only device. SD cards answer CMD55, eMMC answers CMD1, SDIO-only
-	// functions answer neither.
-	uint32 response[4] = {};
+	// MMC bus manager scan: its scan loops forever on an empty slot. SDIO
+	// cards answer CMD5, SD cards answer CMD55, eMMC answers CMD1.
+	uint32_t response[4] = {};
+
+	// Beacon: SDIO first, like Linux. With a DT pwrseq the reset was just
+	// released, so give the chip time to come up.
+	if (_ProbeSdio(fConfig.resetFromDt ? kSdioProbeTries : 1))
+		return true;
 
 	_ExecuteCommandLocked(GO_IDLE_STATE, 0, NULL, NULL);
 	snooze(2000);
@@ -1142,9 +1333,17 @@ DwMmcHost::_ProbeForCard()
 		return true;
 	}
 
-	INFO("%s: no card answers (CMD8 %s, CMD55 %s, CMD1 %s); not scanning. "
-		"Insert a card and reboot.\n", fConfig.name, strerror(ifCond),
-		strerror(appCmd), strerror(opCond));
+	// Beacon: nothing answered. On the Orange Pi RV the Wi-Fi chip is held
+	// in reset by WL_REG_ON; release it and look again.
+	if (fConfig.resetGpio >= 0 && fConfig.resetHeuristic && !fResetDone) {
+		_SdioPowerSequence("no card answered, board fallback");
+		if (_ProbeSdio(kSdioProbeTries))
+			return true;
+	}
+
+	INFO("%s: no card answers (CMD5, CMD8 %s, CMD55 %s, CMD1 %s); not "
+		"scanning. Insert a card and reboot.\n", fConfig.name,
+		strerror(ifCond), strerror(appCmd), strerror(opCond));
 	return false;
 }
 
@@ -1179,4 +1378,103 @@ DwMmcHost::TerminateBus()
 	// it on.
 	_Write(kDwIntmask, fConfig.cdUsable ? (uint32)kDwIntCd : 0);
 	_SetClockHz(0);
+}
+
+
+// #pragma mark - SDIO (Beacon)
+
+
+status_t
+DwMmcHost::ExecuteBufferCommand(uint8_t command, uint32_t argument,
+	uint32_t* response, const mmc_buffer_transfer* transfer)
+{
+	if (transfer == NULL || transfer->buffer == NULL
+		|| transfer->block_size == 0
+		|| transfer->block_size > kSdioMaxBlockSize
+		|| transfer->block_count == 0 || transfer->block_count > 511) {
+		return B_BAD_VALUE;
+	}
+
+	MutexLocker locker(fLock);
+
+	size_t length = (size_t)transfer->block_size * transfer->block_count;
+	DataPhase data;
+	data.isWrite = transfer->is_write;
+	data.vecs = NULL;
+	data.vecCount = 0;
+	data.buffer = (uint8*)transfer->buffer;
+	data.length = length;
+
+	if (fTraceIo > 0) {
+		fTraceIo--;
+		SDIO_INFO("%s: cmd%u arg %#" B_PRIx32 " %s %" B_PRIuSIZE " bytes (%"
+			B_PRIu32 " x %" B_PRIu32 ")\n", fConfig.name, command, argument,
+			data.isWrite ? "write" : "read", length, transfer->block_count,
+			transfer->block_size);
+	}
+
+	// Same data path setup as DoIO(), with the SDIO block size.
+	if (!_ResetController(kDwCtrlFifoReset))
+		return B_IO_ERROR;
+	_Write(kDwFifoth, fFifoth);
+	_Write(kDwTmout, 0xffffffff);
+	_Write(kDwBlksiz, transfer->block_size);
+	_Write(kDwBytcnt, (uint32)length);
+
+	uint64 hz = fCurrentHz != 0 ? fCurrentHz : 400000;
+	bigtime_t wireTime = (bigtime_t)((uint64)length * 8 * 1000000
+		/ (hz * fBusWidth));
+	bigtime_t deadline = system_time() + 1000000 + wireTime * 10;
+
+	uint32_t localResponse = 0;
+	status_t status = _ExecuteCommandLocked(command, argument,
+		response != NULL ? response : &localResponse, &data);
+	if (status != B_OK) {
+		_RecoverFromDataError();
+		return status;
+	}
+
+	status = _TransferPio(data, deadline);
+	if (status != B_OK) {
+		// No CMD12 for SDIO: the bus manager aborts through CCCR ABORT.
+		_RecoverFromDataError();
+		return status;
+	}
+
+	if (data.isWrite && _WaitWhileBusy(1000000) != B_OK) {
+		ERROR("%s: card still busy after cmd%u write\n", fConfig.name,
+			command);
+		return B_TIMED_OUT;
+	}
+	return B_OK;
+}
+
+
+void
+DwMmcHost::SetSdioIrqSemaphore(sem_id semaphore)
+{
+	MutexLocker locker(fLock);
+	fSdioIrqSemaphore = semaphore;
+}
+
+
+void
+DwMmcHost::EnableSdioIrq(bool enable)
+{
+	if (enable != fSdioIrqEnabled) {
+		SDIO_INFO("%s: host SDIO interrupt %s (INTMASK bit 16, %" B_PRId32
+			" seen so far%s)\n", fConfig.name, enable ? "on" : "off",
+			atomic_get(&fSdioIrqCount),
+			fPollMode ? "; host is in poll mode, the bus manager polls"
+				: "");
+		fSdioIrqEnabled = enable;
+	}
+
+	InterruptsSpinLocker locker(fIntmaskLock);
+	uint32 mask = _Read(kDwIntmask);
+	if (enable)
+		mask |= kDwIntSdio;
+	else
+		mask &= ~(uint32)kDwIntSdio;
+	_Write(kDwIntmask, mask);
 }

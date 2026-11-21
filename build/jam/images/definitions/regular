@@ -3,6 +3,14 @@
 # import everything from the minimum image
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions minimum ] ;
 
+# Beacon (BEACON_MINIMUM_MEDIA): on riscv64 the minimum image already lists the
+# media kit pieces for the JH7110 PWM-DAC; drop them so that the "+=" lists
+# below do not add them a second time.
+SYSTEM_PREFERENCES = [ FFilter $(SYSTEM_PREFERENCES) : Media ] ;
+SYSTEM_SERVERS = [ FFilter $(SYSTEM_SERVERS) : media_addon_server media_server ] ;
+SYSTEM_ADD_ONS_MEDIA = [ FFilter $(SYSTEM_ADD_ONS_MEDIA)
+	: hmulti_audio.media_addon mixer.media_addon ] ;
+
 SEARCH on [ FGristFiles userguide quicktour welcome ]
 	= [ FDirName $(HAIKU_TOP) data bin ] ;
 SYSTEM_BIN += userguide quicktour welcome ;

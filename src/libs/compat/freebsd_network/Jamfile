@@ -60,6 +60,12 @@ KernelStaticLibrary freebsd_usb.a :
 	usb_util.c
 	;
 
+# Beacon: SDIO function drivers (HAIKU_FBSD_WLAN_DRIVER_GLUE(..., sdio)).
+UsePrivateHeaders drivers ;
+KernelStaticLibrary freebsd_sdio.a :
+	sdio.cpp
+	;
+
 SEARCH_SOURCE += [ FDirName $(SUBDIR) dev mii ] ;
 
 KernelStaticLibrary freebsd_mii.a :

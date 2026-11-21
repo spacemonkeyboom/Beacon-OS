@@ -128,9 +128,13 @@ extern device_manager_info *gDeviceManager;
 
 
 class MMCBus;
+class SdioCard;
 
 class MMCBus {
 public:
+	// Beacon: SDIO (sdio.cpp) uses the private command helpers.
+	friend class SdioCard;
+
 
 								MMCBus(device_node *node);
 								~MMCBus();
@@ -149,7 +153,16 @@ public:
 
 				void			AcquireBus() { acquire_sem(fLockSemaphore); }
 				void			ReleaseBus() { release_sem(fLockSemaphore); }
+
+				// Beacon: SDIO
+				status_t		ExecuteBufferCommand(uint16_t rca,
+									uint8_t command, uint32_t argument,
+									uint32_t* response,
+									const mmc_buffer_transfer* transfer);
+				bool			HostSupportsSdio() const;
+				SdioCard*		Sdio() const { return fSdioCard; }
 private:
+				bool			_TrySdio();
 				status_t		_ActivateDevice(uint16_t rca);
 				void			_AcquireScanSemaphore();
 				void			_TerminateBus();
@@ -166,6 +179,7 @@ private:
 		sem_id					fLockSemaphore;
 		uint16					fActiveDevice;
 		card_type				fCardType;
+		SdioCard*				fSdioCard;
 		// FIXME card type shall be extended to map card type to RCA.
 		// In theory RCA is 16 bit allowing for 2^16 devices on signle bus
 		// Practically this is limited by bus max capacitance(ver low speed)

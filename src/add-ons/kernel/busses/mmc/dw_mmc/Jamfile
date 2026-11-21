@@ -15,5 +15,6 @@ SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
 
 KernelAddon dw_mmc :
 	DwMmc.cpp
+	Jh7110Gpio.cpp
 	kernel_interface.cpp
 ;

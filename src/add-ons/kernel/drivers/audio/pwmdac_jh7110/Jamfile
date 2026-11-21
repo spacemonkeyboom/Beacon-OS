@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src add-ons kernel drivers audio pwmdac_jh7110 ;
+
+# StarFive JH7110 PWM-DAC (3.5 mm headphone jack). Contains Linux-derived
+# code: the add-on is GPL-2.0-only, see THIRD_PARTY.md.
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders audio drivers ;
+
+KernelAddon pwmdac_jh7110 :
+	Pwmdac.cpp
+	multi.cpp
+	kernel_interface.cpp
+;

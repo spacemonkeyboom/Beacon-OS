@@ -31,6 +31,7 @@ struct root_device_softc {
 		BUS_INVALID = 0,
 		BUS_pci,
 		BUS_uhub,
+		BUS_sdio,
 	} bus;
 
 	struct pci_info	pci_info;
@@ -38,6 +39,8 @@ struct root_device_softc {
 	bool			is_msix;
 
 	struct freebsd_usb_device* usb_dev;
+	struct haiku_sdio_device* sdio_dev;
+		// Beacon: SDIO function (freebsd_sdio.a, sdio.cpp)
 };
 
 enum {
@@ -83,6 +86,7 @@ status_t init_pci();
 void uninit_pci();
 
 void uninit_usb() __attribute__((weak));
+void uninit_sdio() __attribute__((weak));
 
 void report_probed_device(int bus, void* compat_device, driver_t* driver,
 	void (*prepare_attach)(void*, device_t), void (*free_compat_device)(void*));

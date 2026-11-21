@@ -13,6 +13,7 @@ Local copies of the upstream files are in
 |------|---------|-----|
 | `DwMmc.h` | GPL-2.0-or-later | Register map and bit definitions from Linux `dw_mmc.h` and U-Boot `dwmmc.h`. |
 | `DwMmc.cpp` | GPL-2.0-or-later | Reset, CIU clock update, divider, command flags, FIFO PIO and error recovery adapted from Linux `dw_mmc.c` and U-Boot `dw_mmc.c`. The reply-type table follows Haiku's MIT `sdhci.cpp`, which may be included in a GPL file. |
+| `Jh7110Gpio.h`, `Jh7110Gpio.cpp` | MIT (Beacon) | Minimal JH7110 SYS GPIO helper. Register layout **facts only** (DOEN 0x000 / DOUT 0x040 / GPIOIN 0x118 / PADCFG 0x120 + 4*pin, byte per pin, GPOUT_LOW/HIGH = 0/1, GPOEN_ENABLE = 0, PADCFG bits, SD0 pads 64-74) from Linux v6.12 `drivers/pinctrl/starfive/pinctrl-starfive-jh7110.c` and `pinctrl-starfive-jh7110-sys.c` (GPL-2.0-only) and `include/dt-bindings/pinctrl/starfive,jh7110-pinctrl.h`. No code copied. |
 | `kernel_interface.cpp` | MIT (Beacon) | New device manager and FDT glue with no third-party code. It includes the GPL header, so the linked add-on is GPL. |
 | `Jamfile`, `README.md`, `THIRD_PARTY.md` | MIT (Beacon) | Build files and docs. |
 
@@ -63,6 +64,14 @@ Repo: https://github.com/orangepi-xunlong/u-boot-orangepi
 | arch/riscv/boot/dts/starfive/jh7110-orangepi-rv.dts | Linux master 65e4fd9 | mmc0 is the AP6256 SDIO Wi-Fi (`mmc-pwrseq`, `wifi@1`), mmc1 is the SD slot |
 | include/dt-bindings/clock/starfive,jh7110-crg.h, dt-bindings/reset/starfive,jh7110-crg.h | Linux v6.12 (GPL-2.0 OR MIT) | SDIO clock (91-94) and reset (64/65) indices, read-only diagnostics |
 | drivers/clk/starfive/clk-starfive-jh71x0.h, drivers/reset/starfive/reset-starfive-jh7110.c, reset-starfive-jh71x0.c | Linux v6.12 | Clock register layout (bit 31 enable, 23:0 divider), reset status offset 0x308 and polarity |
+
+### Beacon SDIO additions (2026-11-20)
+
+| Source | SPDX | Used for |
+|--------|------|----------|
+| Linux v6.12 drivers/mmc/host/dw_mmc.c, dw_mmc.h (copies in `~/beacon/refs/jh7110/dwmmc-2026-11-20/linux/`) | GPL-2.0-or-later | `SDMMC_INT_SDIO(n)` = bit 16+n, CMD52-to-CCCR-ABORT gets `SDMMC_CMD_STOP`, `dw_mci_prepare_sdio_irq` (low-power gate off for SDIO), ISR ack + mask of the SDIO bit, `ack_sdio_irq` = unmask, final partial FIFO word (`dw_mci_pull_final_bytes`) |
+| Linux v6.12 drivers/mmc/core/pwrseq_simple.c, core.c `mmc_power_up()` (copies in `~/beacon/refs/sdio-2026-11-20/linux/`) | GPL-2.0 | Facts: reset asserted before power-up, released after `power_delay_ms` (10), then `post-power-on-delay-ms`, then clock and 10 ms more |
+| Linux master arch/riscv/boot/dts/starfive/jh7110-orangepi-rv.dts | GPL-2.0 OR MIT | `wifi_pwrseq` = GPIO62 active low, `&mmc0` `wifi@1` brcm,bcm43456-fmac, `cap-sd-highspeed` |
 
 ### Haiku (MIT)
 
