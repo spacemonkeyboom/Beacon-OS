@@ -144,6 +144,16 @@ rule DefineDefaultBuildProfiles
 			HAIKU_IMAGE_SIZE ?= 650 ;
 			HAIKU_NIGHTLY_BUILD = 1 ;
 
+			# Beacon: libogg/libvorbis are not in riscv64 build-packages; libmidi needs
+			# libvorbisfile. Shipped as package files (data/beacon/packages).
+			if $(TARGET_ARCH) = riscv64 {
+				local beaconPkgs = libogg-1.3.6-2-riscv64.hpkg
+					libvorbis-1.3.7-1-riscv64.hpkg ;
+				SEARCH on $(beaconPkgs)
+					= [ FDirName $(HAIKU_TOP) data beacon packages ] ;
+				AddFilesToHaikuImage system packages : $(beaconPkgs) ;
+			}
+
 			AddHaikuImageSystemPackages
 				mandoc
 				noto
