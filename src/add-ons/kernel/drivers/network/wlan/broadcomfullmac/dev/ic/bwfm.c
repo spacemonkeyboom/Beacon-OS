@@ -512,6 +512,11 @@ bwfm_init(struct ifnet *ifp)
 		return;
 	}
 
+	/* Beacon (as air/OS does): net80211 picks the BSS and runs the WPA
+	 * handshake; firmware roaming could change the peer under it. */
+	if (bwfm_fwvar_var_set_int(sc, "roam_off", 1))
+		printf("%s: could not disable firmware roaming\n", DEVNAME(sc));
+
 	/* Select target by RSSI (boost on 5GHz) */
 	join_pref[0].type = BWFM_JOIN_PREF_RSSI_DELTA;
 	join_pref[0].len = 2;

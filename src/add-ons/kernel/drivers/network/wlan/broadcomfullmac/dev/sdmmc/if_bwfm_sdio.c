@@ -57,7 +57,7 @@
 #include <dev/ic/bwfmvar.h>
 #include <dev/ic/bwfmreg.h>
 #include <dev/sdmmc/if_bwfm_sdio.h>
-#include <sys/timeout.h>
+#include <OS.h>
 
 #ifdef __HAIKU__
 #include <dev/sdio/haiku_sdio.h>
@@ -120,8 +120,9 @@ struct bwfm_sdio_softc {
 
 	uint8_t			  sc_tx_seq;
 	uint8_t			  sc_tx_max_seq;
-	struct timeout		  sc_poll;	/* Beacon: Linux-style 10 ms poll */
-	int			  sc_poll_on;
+	sem_id			  sc_poll_sem;	/* Beacon: own bus thread */
+	thread_id		  sc_poller;
+	volatile int		  sc_poll_on;
 	uint32_t		  sc_stall_logs;
 	struct mbuf_list	  sc_tx_queue;
 	int			  sc_tx_count;
@@ -142,7 +143,8 @@ int		 bwfm_sdio_detach(struct device *, int);
 int		 bwfm_sdio_intr(void *);
 int		 bwfm_sdio_oob_intr(void *);
 void		 bwfm_sdio_task(void *);
-void		 bwfm_sdio_poll(void *);
+static void	 bwfm_sdio_kick(struct bwfm_sdio_softc *);
+static status_t	 bwfm_sdio_poller(void *);
 int		 bwfm_sdio_load_microcode(struct bwfm_sdio_softc *,
 		    u_char *, size_t, u_char *, size_t);
 
@@ -527,9 +529,15 @@ bwfm_sdio_preinit(struct bwfm_softc *bwfm)
 		/* Beacon: like Linux brcmfmac's watchdog, also poll every 10 ms,
 		 * so a lost in-band SDIO interrupt cannot stall RX (and with it
 		 * the TX credits and control replies). */
-		timeout_set(&sc->sc_poll, bwfm_sdio_poll, sc);
 		sc->sc_poll_on = 1;
-		timeout_add_msec(&sc->sc_poll, 10);
+		sc->sc_poll_sem = create_sem(0, "bwfm sdio");
+		sc->sc_poller = spawn_kernel_thread(bwfm_sdio_poller,
+		    "bwfm sdio bus", B_NORMAL_PRIORITY, sc);
+		if (sc->sc_poll_sem < 0 || sc->sc_poller < 0) {
+			printf("%s: can't start the bus thread\n", DEVNAME(sc));
+			sc->sc_ih = NULL;
+		} else
+			resume_thread(sc->sc_poller);
 	}
 	if (sc->sc_ih == NULL) {
 		printf("%s: can't establish interrupt\n", DEVNAME(sc));
@@ -727,21 +735,46 @@ bwfm_sdio_readshared(struct bwfm_sdio_softc *sc)
 	sc->sc_console_addr = letoh32(sdpcm.console_addr);
 }
 
-void
-bwfm_sdio_poll(void *v)
+/*
+ * Beacon: the bus task runs on its own thread, not on the shared task
+ * queue (systq). net80211 sends firmware commands from systq and then
+ * sleeps there waiting for the reply; if reading the reply is also a systq
+ * task, it cannot run until that wait times out ("timeout waiting for
+ * txctl response"). Idea from air/OS's broadcomfmac (MIT). The thread also
+ * serves the card every 10 ms in case an SDIO interrupt is missed, like
+ * Linux brcmfmac's watchdog.
+ */
+static status_t
+bwfm_sdio_poller(void *arg)
 {
-	struct bwfm_sdio_softc *sc = (void *)v;
+	struct bwfm_sdio_softc *sc = arg;
 
-	if (!sc->sc_poll_on)
+	while (sc->sc_poll_on) {
+		acquire_sem_etc(sc->sc_poll_sem, 1, B_RELATIVE_TIMEOUT, 10000);
+		if (!sc->sc_poll_on)
+			break;
+		mtx_lock(&Giant);
+		bwfm_sdio_task(sc);
+		mtx_unlock(&Giant);
+	}
+	return B_OK;
+}
+
+static void
+bwfm_sdio_kick(struct bwfm_sdio_softc *sc)
+{
+	int32 count;
+
+	/* one pending wake-up is enough */
+	if (get_sem_count(sc->sc_poll_sem, &count) == B_OK && count > 0)
 		return;
-	task_add(systq, &sc->sc_task);
-	timeout_add_msec(&sc->sc_poll, 10);
+	release_sem_etc(sc->sc_poll_sem, 1, B_DO_NOT_RESCHEDULE);
 }
 
 int
 bwfm_sdio_intr(void *v)
 {
-	bwfm_sdio_task(v);
+	bwfm_sdio_kick(v);
 	return 1;
 }
 
@@ -819,8 +852,13 @@ bwfm_sdio_detach(struct device *self, int flags)
 {
 	struct bwfm_sdio_softc *sc = (struct bwfm_sdio_softc *)self;
 
-	sc->sc_poll_on = 0;
-	timeout_del(&sc->sc_poll);
+	if (sc->sc_poll_on) {
+		status_t result;
+		sc->sc_poll_on = 0;
+		release_sem(sc->sc_poll_sem);
+		wait_for_thread(sc->sc_poller, &result);
+		delete_sem(sc->sc_poll_sem);
+	}
 	bwfm_detach(&sc->sc_sc, flags);
 
 	dma_free(sc->sc_bounce_buf, sc->sc_bounce_size);
@@ -1527,7 +1565,7 @@ bwfm_sdio_txdata(struct bwfm_softc *bwfm, struct mbuf *m)
 
 	sc->sc_tx_count++;
 	ml_enqueue(&sc->sc_tx_queue, m);
-	task_add(systq, &sc->sc_task);
+	bwfm_sdio_kick(sc);
 	return 0;
 }
 
@@ -1555,7 +1593,7 @@ bwfm_sdio_txctl(struct bwfm_softc *bwfm, void *arg)
 
 	TAILQ_INSERT_TAIL(&sc->sc_sc.sc_bcdc_rxctlq, ctl, next);
 	ml_enqueue(&sc->sc_tx_queue, m);
-	task_add(systq, &sc->sc_task);
+	bwfm_sdio_kick(sc);
 	return 0;
 
 fail:
