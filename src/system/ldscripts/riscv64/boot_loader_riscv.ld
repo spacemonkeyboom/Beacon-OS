@@ -43,4 +43,7 @@ SECTIONS
 	_end = . ;
 
 	.bss.stack : { *(.bss.stack) }
+
+	/* Strip unnecessary stuff */
+	/DISCARD/ : { *(.comment .note .eh_frame .dtors .stab .stabstr .debug*) }
 }
