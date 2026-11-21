@@ -509,7 +509,7 @@ status_t RISCV64VMTranslationMap::Protect(addr_t base, addr_t top,
 				break;
 		}
 
-		fInvalidCode = newPte.isExec;
+		fInvalidCode |= newPte.isExec;
 
 		if (oldPte.isAccessed)
 			InvalidatePage(page);
@@ -623,7 +623,7 @@ RISCV64VMTranslationMap::ClearAccessedAndModified(VMArea* area, addr_t address,
 void
 RISCV64VMTranslationMap::Flush()
 {
-	if (fInvalidPagesCount <= 0)
+	if (fInvalidPagesCount <= 0 && !fInvalidCode)
 		return;
 
 	ThreadCPUPinner pinner(thread_get_current_thread());
@@ -639,7 +639,7 @@ RISCV64VMTranslationMap::Flush()
 		} else {
 			InvalidateUserTLB(fActiveOnCpus, 0);
 		}
-	} else {
+	} else if (fInvalidPagesCount > 0) {
 		TRACE("flush_tmap: %d pages to invalidate, invalidate list\n",
 			fInvalidPagesCount);
 
@@ -658,7 +658,12 @@ RISCV64VMTranslationMap::Flush()
 		FenceI();
 
 		int cpu = smp_get_current_cpu();
-		CPUSet cpuMask = fActiveOnCpus;
+		CPUSet cpuMask;
+		if (fIsKernel)
+			cpuMask.SetAll();
+		else
+			cpuMask = fActiveOnCpus;
+
 		cpuMask.ClearBit(cpu);
 
 		if (!cpuMask.IsEmpty()) {
@@ -671,8 +676,10 @@ RISCV64VMTranslationMap::Flush()
 							hartMask |= (uint64)1 << gCPU[i].arch.hartId;
 					}
 					// TODO: handle hart ID >= 64
-					memory_full_barrier();
-					sbi_remote_fence_i(hartMask, 0);
+					if (hartMask != 0) {
+						memory_full_barrier();
+						sbi_remote_fence_i(hartMask, 0);
+					}
 					break;
 				}
 			}
