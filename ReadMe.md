@@ -25,9 +25,16 @@ Development is AI-assisted.
 | microSD card | Works (new `dw_mmc` driver, PIO) |
 | Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
 | Wired Ethernet | Driver written, **not in the image yet** (being fixed) |
-| Wi-Fi / Bluetooth (AP6256) | In progress (needs SDIO support) |
-| Audio (HDMI, 3.5 mm) | Planned |
+| Wi-Fi (AP6256 / BCM43456 over SDIO) | Scans and runs the WPA handshake; joining is being fixed |
+| Bluetooth | Planned |
+| Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
+| System sounds (Kenney "Interface Sounds", CC0) | Works |
 | Web browser | Planned (WebPositive first, Falkon later) |
+
+**For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
+lists the bugs and hardware quirks we found (RISC-V TLB faults, VL805 USB,
+SDIO, OpenBSD Wi-Fi driver on Haiku, Media Kit) and how we fixed them. Each
+driver folder also has a README and a THIRD_PARTY.md.
 
 Known issues:
 
