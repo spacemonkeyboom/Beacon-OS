@@ -27,6 +27,43 @@
 #include <algorithm>
 
 
+// Beacon: the U74 (JH7110) may cache a "not mapped" translation. Haiku does
+// not flush the TLB when an invalid PTE becomes valid, so a CPU can fault on
+// a page that is mapped (seen on a fresh kernel stack, rv39). Like Linux's
+// spurious-fault handling: if the active page table permits the access,
+// flush that one entry and retry instead of faulting.
+static bool
+beacon_spurious_page_fault(uint64 address, uint64 cause, bool userMode)
+{
+	SatpReg satp{.val = Satp()};
+	if (satp.mode == 0)
+		return false;
+	Pte* table = (Pte*)VirtFromPhys((phys_addr_t)satp.ppn * B_PAGE_SIZE);
+	for (int level = 2; level >= 0; level--) {
+		Pte pte = table[VirtAdrPte(address, level)];
+		if (!pte.isValid)
+			return false;
+		if (pte.isRead || pte.isWrite || pte.isExec) {
+			// leaf
+			if (!pte.isAccessed)
+				return false;
+			if (userMode && !pte.isUser)
+				return false;
+			if (cause == causeStorePageFault && (!pte.isWrite || !pte.isDirty))
+				return false;
+			if (cause == causeLoadPageFault && !pte.isRead)
+				return false;
+			if (cause == causeExecPageFault && !pte.isExec)
+				return false;
+			FlushTlbPage(address);
+			return true;
+		}
+		table = (Pte*)VirtFromPhys((phys_addr_t)pte.ppn * B_PAGE_SIZE);
+	}
+	return false;
+}
+
+
 static uint32 sPlicContexts[SMP_MAX_CPUS];
 
 
@@ -200,6 +237,17 @@ STrap(iframe* frame)
 		case causeLoadPageFault:
 		case causeStorePageFault: {
 			uint64 stval = Stval();
+
+			if (beacon_spurious_page_fault(stval, frame->cause,
+					SstatusReg{.val = frame->status}.spp == modeU)) {
+				static int32 sSpuriousFaults = 0;
+				if (atomic_add(&sSpuriousFaults, 1) < 8) {
+					dprintf("beacon: spurious page fault at %#" B_PRIx64
+						" (ip %#" B_PRIx64 "), TLB entry flushed\n", stval,
+						(uint64)frame->epc);
+				}
+				return;
+			}
 
 			if (debug_debugger_running()) {
 				Thread* thread = thread_get_current_thread();
