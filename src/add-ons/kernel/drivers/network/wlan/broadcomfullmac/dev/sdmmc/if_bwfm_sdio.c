@@ -57,6 +57,7 @@
 #include <dev/ic/bwfmvar.h>
 #include <dev/ic/bwfmreg.h>
 #include <dev/sdmmc/if_bwfm_sdio.h>
+#include <sys/timeout.h>
 
 #ifdef __HAIKU__
 #include <dev/sdio/haiku_sdio.h>
@@ -119,6 +120,9 @@ struct bwfm_sdio_softc {
 
 	uint8_t			  sc_tx_seq;
 	uint8_t			  sc_tx_max_seq;
+	struct timeout		  sc_poll;	/* Beacon: Linux-style 10 ms poll */
+	int			  sc_poll_on;
+	uint32_t		  sc_stall_logs;
 	struct mbuf_list	  sc_tx_queue;
 	int			  sc_tx_count;
 
@@ -138,6 +142,7 @@ int		 bwfm_sdio_detach(struct device *, int);
 int		 bwfm_sdio_intr(void *);
 int		 bwfm_sdio_oob_intr(void *);
 void		 bwfm_sdio_task(void *);
+void		 bwfm_sdio_poll(void *);
 int		 bwfm_sdio_load_microcode(struct bwfm_sdio_softc *,
 		    u_char *, size_t, u_char *, size_t);
 
@@ -518,6 +523,14 @@ bwfm_sdio_preinit(struct bwfm_softc *bwfm)
 	sc->sc_ih = sdmmc_intr_establish(bwfm->sc_dev.dv_parent,
 #endif
 	    bwfm_sdio_intr, sc, DEVNAME(sc));
+	if (sc->sc_ih != NULL) {
+		/* Beacon: like Linux brcmfmac's watchdog, also poll every 10 ms,
+		 * so a lost in-band SDIO interrupt cannot stall RX (and with it
+		 * the TX credits and control replies). */
+		timeout_set(&sc->sc_poll, bwfm_sdio_poll, sc);
+		sc->sc_poll_on = 1;
+		timeout_add_msec(&sc->sc_poll, 10);
+	}
 	if (sc->sc_ih == NULL) {
 		printf("%s: can't establish interrupt\n", DEVNAME(sc));
 		bwfm_sdio_clkctl(sc, CLK_NONE, 0);
@@ -714,6 +727,17 @@ bwfm_sdio_readshared(struct bwfm_sdio_softc *sc)
 	sc->sc_console_addr = letoh32(sdpcm.console_addr);
 }
 
+void
+bwfm_sdio_poll(void *v)
+{
+	struct bwfm_sdio_softc *sc = (void *)v;
+
+	if (!sc->sc_poll_on)
+		return;
+	task_add(systq, &sc->sc_task);
+	timeout_add_msec(&sc->sc_poll, 10);
+}
+
 int
 bwfm_sdio_intr(void *v)
 {
@@ -795,6 +819,8 @@ bwfm_sdio_detach(struct device *self, int flags)
 {
 	struct bwfm_sdio_softc *sc = (struct bwfm_sdio_softc *)self;
 
+	sc->sc_poll_on = 0;
+	timeout_del(&sc->sc_poll);
 	bwfm_detach(&sc->sc_sc, flags);
 
 	dma_free(sc->sc_bounce_buf, sc->sc_bounce_size);
@@ -1126,8 +1152,15 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
 	struct mbuf *m;
 	int i;
 
-	if (!bwfm_sdio_tx_ok(sc))
+	if (!bwfm_sdio_tx_ok(sc)) {
+		if (sc->sc_stall_logs < 20) {
+			sc->sc_stall_logs++;
+			printf("%s: tx stalled: no credit (seq %u max %u, %d queued)\n",
+			    DEVNAME(sc), sc->sc_tx_seq, sc->sc_tx_max_seq,
+			    sc->sc_tx_count);
+		}
 		return;
+	}
 
 	i = min((uint8_t)(sc->sc_tx_max_seq - sc->sc_tx_seq), 32);
 	while (i--) {
@@ -1286,7 +1319,13 @@ bwfm_sdio_rx_frames(struct bwfm_sdio_softc *sc)
 			break;
 		}
 
-		sc->sc_tx_max_seq = swhdr->maxseqnr;
+		/* Beacon: Linux brcmf_sdio_update_txseq(): reject a bogus window */
+		if ((uint8_t)(swhdr->maxseqnr - sc->sc_tx_seq) > 0x40) {
+			printf("%s: bad max tx seq %u (seq %u), using seq+2\n",
+			    DEVNAME(sc), swhdr->maxseqnr, sc->sc_tx_seq);
+			sc->sc_tx_max_seq = sc->sc_tx_seq + 2;
+		} else
+			sc->sc_tx_max_seq = swhdr->maxseqnr;
 
 		flen = hwhdr->frmlen - (sizeof(*hwhdr) + sizeof(*swhdr));
 		if (flen == 0) {
