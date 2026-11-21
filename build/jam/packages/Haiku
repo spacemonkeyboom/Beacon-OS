@@ -291,7 +291,8 @@ SEARCH on $(logoArtwork) = [ FDirName $(HAIKU_TOP) data artwork ] ;
 AddFilesToPackage data artwork : $(logoArtwork) ;
 # Beacon: default desktop wallpaper (set by Tracker on first run)
 SEARCH on beacon-wallpaper.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
-AddFilesToPackage data artwork : beacon-wallpaper.bmp ;
+SEARCH on beacon-wallpaper-2.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
+AddFilesToPackage data artwork : beacon-wallpaper.bmp beacon-wallpaper-2.bmp ;
 
 # Mail spell check dictionaries
 local spellFiles = words geekspeak ;

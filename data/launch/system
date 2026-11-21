@@ -28,7 +28,9 @@ service x-vnd.Haiku-media_server {
 	launch /system/servers/media_server
 	no_safemode
 	legacy
-	on initial_volumes_mounted
+	# Beacon (test): not started at boot while we find why it stalled the
+	# riscv64 boot; start it by hand.
+	on_demand
 }
 
 service x-vnd.Haiku-midi_server {
