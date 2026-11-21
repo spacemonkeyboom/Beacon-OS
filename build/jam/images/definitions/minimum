@@ -367,7 +367,7 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 # port; ships its firmware (data/system/data/firmware/broadcomfullmac).
 SYSTEM_ADD_ONS_DRIVERS_NET += [ FFilterByBuildFeatures
 	riscv64 @{
-		#broadcomfullmac	# Beacon: left out until its firmware upload works
+		broadcomfullmac
 	}@ # riscv64
 ] ;
 

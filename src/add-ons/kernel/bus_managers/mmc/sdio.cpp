@@ -474,7 +474,9 @@ SdioCard::_SetupBus()
 
 	_SetClock(25000);
 	fMaxClockKhz = 25000;
-	if ((speed & kSpeedShs) != 0) {
+	// Beacon: high speed (50 MHz) is skipped for now: without sample-phase
+	// tuning, long CMD53 block reads failed on the Orange Pi RV (rv29).
+	if (false && (speed & kSpeedShs) != 0) {
 		if (_WriteByteLocked(0, SDIO_CCCR_SPEED, speed | kSpeedEhs) == B_OK) {
 			_SetClock(50000);
 			if (_CheckDataLines("1-bit, 50 MHz high speed") == B_OK) {

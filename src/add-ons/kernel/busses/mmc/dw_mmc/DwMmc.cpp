@@ -767,8 +767,11 @@ DwMmcHost::_ExecuteCommandLocked(uint8_t command, uint32_t argument,
 			result = B_TIMED_OUT;
 		else if ((cmdr & kDwCmdRespCrc) != 0 && (status & kDwIntRcrc) != 0)
 			result = B_BAD_VALUE;
-		else if ((status & kDwIntRespErr) != 0)
+		else if ((status & kDwIntRespErr) != 0) {
+			ERROR("%s: cmd%u: response error, RINTSTS %#" B_PRIx32 "\n",
+				fConfig.name, command, status);
 			result = B_IO_ERROR;
+		}
 	} else {
 		ERROR("%s: cmd%u got no command-done (RINTSTS %#" B_PRIx32
 			", STATUS %#" B_PRIx32 ")\n", fConfig.name, command, status,
@@ -1414,8 +1417,12 @@ DwMmcHost::ExecuteBufferCommand(uint8_t command, uint32_t argument,
 	}
 
 	// Same data path setup as DoIO(), with the SDIO block size.
-	if (!_ResetController(kDwCtrlFifoReset))
+	if (!_ResetController(kDwCtrlFifoReset)) {
+		ERROR("%s: cmd%u: FIFO reset did not complete (STATUS %#" B_PRIx32
+			", RINTSTS %#" B_PRIx32 ")\n", fConfig.name, command,
+			_Read(kDwStatus), _Read(kDwRintsts));
 		return B_IO_ERROR;
+	}
 	_Write(kDwFifoth, fFifoth);
 	_Write(kDwTmout, 0xffffffff);
 	_Write(kDwBlksiz, transfer->block_size);
