@@ -53,7 +53,7 @@ Without the `wpa_supplicant` package there is no password dialog and WPA
 networks cannot be joined. The `minimum` profile does not include it
 (`build/jam/DefaultBuildProfiles`).
 
-### Control replies time out: task-queue deadlock — pending
+### Control replies time out: task-queue deadlock — confirmed
 * **Seen:** scans and the WPA 4-way handshake work, but nearly every firmware
   command logs "timeout waiting for txctl response"; key install fails and
   the AP drops the station after ~10 s.

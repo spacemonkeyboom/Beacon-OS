@@ -25,7 +25,7 @@ Development is AI-assisted.
 | microSD card | Works (new `dw_mmc` driver, PIO) |
 | Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
 | Wired Ethernet | Driver written, **not in the image yet** (being fixed) |
-| Wi-Fi (AP6256 / BCM43456 over SDIO) | Scans and runs the WPA handshake; joining is being fixed |
+| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP (2.4 and 5 GHz chip; 25 MHz SDIO for now) |
 | Bluetooth | Planned |
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
