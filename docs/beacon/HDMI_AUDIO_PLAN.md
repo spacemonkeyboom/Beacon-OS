@@ -3,9 +3,15 @@
 
 # HDMI audio on the JH7110 (Orange Pi RV): plan
 
-Status: research and plan only (2026-11-20). Nothing here is implemented.
-Phase 1 (3.5 mm jack, `src/add-ons/kernel/drivers/audio/pwmdac_jh7110`) comes
-first. The display is currently brought up by the EFI loader replaying
+Status (2026-11-20, later): implemented, compile-checked, not yet run on
+hardware. HDMI is the second output of the jack driver
+(`src/add-ons/kernel/drivers/audio/pwmdac_jh7110`, `I2sHdmi.cpp`), one
+hmulti device `/dev/audio/hmulti/pwmdac/1` with an Output selector;
+`audio_output hdmi|jack` switches it (see that driver's README). Deviations
+from the steps below: no separate add-on and no `/dev/audio/hmulti/hdmi/1`;
+bclk = 32 fs (vendor) by default, 64 fs via `i2s_bclk_fs 64`; VOUTCRG
+offsets confirmed from Linux `clk-starfive-jh7110-vout.c` (hdmi_tx_mclk
+0x3c, hdmi_tx_bclk 0x40, hdmi_tx_sys 0x44, gates; VOUT resets 0x48/0x4c). The display is currently brought up by the EFI loader replaying
 U-Boot's display state (`src/system/boot/platform/efi/arch/riscv64/arch_start.cpp`).
 This plan does not touch that code; it only adds audio registers on top of
 the HDMI block the loader left running.

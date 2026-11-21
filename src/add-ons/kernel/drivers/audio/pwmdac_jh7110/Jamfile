@@ -3,16 +3,19 @@
 
 SubDir HAIKU_TOP src add-ons kernel drivers audio pwmdac_jh7110 ;
 
-# StarFive JH7110 PWM-DAC (3.5 mm headphone jack). Contains Linux-derived
-# code: the add-on is GPL-2.0-only, see THIRD_PARTY.md.
+# StarFive JH7110 audio: PWM-DAC (3.5 mm headphone jack) and I2S TX0 ->
+# HDMI, one hmulti device with an output selector. Contains Linux- and
+# vendor-derived code: the add-on is GPL-2.0-only, see THIRD_PARTY.md.
 
 SubDirC++Flags -fno-rtti ;
 
 UsePrivateKernelHeaders ;
-UsePrivateHeaders audio drivers ;
+UsePrivateHeaders audio drivers system ;
 
 KernelAddon pwmdac_jh7110 :
+	Engine.cpp
 	Pwmdac.cpp
+	I2sHdmi.cpp
 	multi.cpp
 	kernel_interface.cpp
 ;

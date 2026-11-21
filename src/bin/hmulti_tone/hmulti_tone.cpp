@@ -10,8 +10,10 @@
  *   hmulti_tone [-d device] [-f hz] [-t seconds] [-r 44100|48000]
  *               [-c left|right|both] [-a amplitude%]
  *
- * The device can only be opened once: stop the media server first
- * (quit application/x-vnd.Be.media-server, or Media preferences).
+ * Only one program can stream to the device at a time: stop the media
+ * server first (quit application/x-vnd.Be.media-server). On the JH7110
+ * audio driver the tone goes to the output chosen with audio_output
+ * (headphones or HDMI).
  */
 
 
@@ -111,6 +113,12 @@ main(int argc, char** argv)
 	format.output.rate = rateCode;
 	format.output.format = B_FMT_16BIT;
 	if (ioctl(fd, B_MULTI_SET_GLOBAL_FORMAT, &format, sizeof(format)) != 0) {
+		if (errno == EBUSY) {
+			fprintf(stderr, "hmulti_tone: %s is streaming for another program;"
+				" the media server probably has it: run 'quit "
+				"application/x-vnd.Be.media-server' first\n", path);
+			return 1;
+		}
 		fprintf(stderr, "hmulti_tone: SET_GLOBAL_FORMAT %" B_PRIu32 " Hz: %s\n",
 			rate, strerror(errno));
 		return 1;

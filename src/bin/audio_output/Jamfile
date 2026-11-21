@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src bin audio_output ;
+
+UsePrivateHeaders audio ;
+
+Application audio_output :
+	audio_output.cpp
+	: root
+;

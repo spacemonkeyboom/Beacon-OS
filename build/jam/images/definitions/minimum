@@ -31,6 +31,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	fortune
 	fstrim
 	ftpd
+	audio_output@riscv64	# Beacon: switch audio output (JH7110 jack / HDMI)
 	hmulti_tone@riscv64	# Beacon: hmulti test tone (JH7110 audio)
 	getarch
 	groupadd

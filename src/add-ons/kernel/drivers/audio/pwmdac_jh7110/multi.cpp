@@ -3,17 +3,24 @@
  *
  * Copyright 2026, The Beacon Project.
  *
- * multi_audio (hmulti) interface of the JH7110 PWM-DAC driver: a stereo,
- * playback-only, 16-bit device with no hardware mixer. Follows the
- * structure of Haiku's null_audio and hda drivers (MIT), but copies every
- * ioctl structure with user_memcpy(): on riscv64 the kernel must not
- * dereference user pointers directly (sstatus.SUM is clear).
+ * multi_audio (hmulti) interface of the JH7110 audio driver: a stereo,
+ * playback-only, 16-bit device with no hardware gain and one selector,
+ * "Output" = Headphones / HDMI (B_MULTI_MIX_MUX, as hda exposes its
+ * selectors). Follows the structure of Haiku's null_audio and hda drivers
+ * (MIT), but copies every ioctl structure with user_memcpy(): on riscv64
+ * the kernel must not dereference user pointers directly (sstatus.SUM is
+ * clear).
+ *
+ * Several openers are allowed: the first one that sets the format, asks
+ * for buffers or exchanges buffers owns the stream; every opener can use
+ * the description and mix ioctls (that is how audio_output switches the
+ * output while the media server plays).
  *
  * This file contains no third-party code.
  */
 
 
-#include "Pwmdac.h"
+#include "Jh7110Audio.h"
 
 #include <string.h>
 
@@ -29,7 +36,9 @@ static const multi_channel_info kChannels[] = {
 		B_CHANNEL_MINI_JACK_STEREO },
 };
 
-#define MIX_GROUP_PLAYBACK_ID	1024
+#define MIX_GROUP_OUTPUT_ID		1024
+#define MIX_OUTPUT_MUX_ID		1025
+#define MIX_OUTPUT_VALUE_ID		1026	// + output index
 
 
 template<typename T>
@@ -53,7 +62,7 @@ copy_out(void* user, const T& local)
 
 
 static status_t
-get_description(PwmdacDevice* device, void* arg)
+get_description(Jh7110AudioDevice* device, void* arg)
 {
 	multi_description description;
 	if (copy_in(description, arg) != B_OK)
@@ -67,7 +76,7 @@ get_description(PwmdacDevice* device, void* arg)
 	description.info_size = sizeof(description);
 	description.interface_version = B_CURRENT_INTERFACE_VERSION;
 	description.interface_minimum = B_CURRENT_INTERFACE_VERSION;
-	strlcpy(description.friendly_name, "JH7110 PWM-DAC",
+	strlcpy(description.friendly_name, "JH7110 audio (jack + HDMI)",
 		sizeof(description.friendly_name));
 	strlcpy(description.vendor_info, "Beacon (StarFive)",
 		sizeof(description.vendor_info));
@@ -103,7 +112,7 @@ get_description(PwmdacDevice* device, void* arg)
 
 
 static status_t
-get_enabled_channels(PwmdacDevice* device, void* arg)
+get_enabled_channels(Jh7110AudioDevice* device, void* arg)
 {
 	multi_channel_enable enable;
 	if (copy_in(enable, arg) != B_OK)
@@ -124,7 +133,7 @@ get_enabled_channels(PwmdacDevice* device, void* arg)
 
 
 static status_t
-set_global_format(PwmdacDevice* device, void* arg)
+set_global_format(Jh7110AudioDevice* device, void* arg)
 {
 	multi_format_info format;
 	if (copy_in(format, arg) != B_OK)
@@ -146,7 +155,7 @@ set_global_format(PwmdacDevice* device, void* arg)
 
 
 static status_t
-get_global_format(PwmdacDevice* device, void* arg)
+get_global_format(Jh7110AudioDevice* device, void* arg)
 {
 	multi_format_info format;
 	if (copy_in(format, arg) != B_OK)
@@ -164,59 +173,127 @@ get_global_format(PwmdacDevice* device, void* arg)
 
 
 static status_t
-list_mix_controls(PwmdacDevice* device, void* arg)
+list_mix_controls(Jh7110AudioDevice* device, void* arg)
 {
 	multi_mix_control_info info;
 	if (copy_in(info, arg) != B_OK)
 		return B_BAD_ADDRESS;
 
-	int32 available = info.control_count;
-	info.control_count = 0;
-	if (available >= 1 && info.controls != NULL) {
-		multi_mix_control control;
-		memset(&control, 0, sizeof(control));
-		control.id = MIX_GROUP_PLAYBACK_ID;
-		control.flags = B_MULTI_MIX_GROUP;
-		control.parent = 0;
-		control.string = S_null;
-		strlcpy(control.name, "Headphone jack", sizeof(control.name));
-		if (copy_out(info.controls, control) != B_OK)
-			return B_BAD_ADDRESS;
-		info.control_count = 1;
+	multi_mix_control controls[2 + AUDIO_OUTPUT_COUNT];
+	memset(controls, 0, sizeof(controls));
+	controls[0].id = MIX_GROUP_OUTPUT_ID;
+	controls[0].flags = B_MULTI_MIX_GROUP;
+	controls[0].string = S_null;
+	strlcpy(controls[0].name, "Output", sizeof(controls[0].name));
+	controls[1].id = MIX_OUTPUT_MUX_ID;
+	controls[1].flags = B_MULTI_MIX_MUX;
+	controls[1].parent = MIX_GROUP_OUTPUT_ID;
+	controls[1].string = S_null;
+	strlcpy(controls[1].name, "Output", sizeof(controls[1].name));
+	for (int32 i = 0; i < AUDIO_OUTPUT_COUNT; i++) {
+		multi_mix_control& value = controls[2 + i];
+		value.id = MIX_OUTPUT_VALUE_ID + i;
+		value.flags = B_MULTI_MIX_MUX_VALUE;
+		value.parent = MIX_OUTPUT_MUX_ID;
+		value.string = S_null;
+		strlcpy(value.name, device->OutputName(i), sizeof(value.name));
+		if (!device->OutputAvailable(i))
+			strlcat(value.name, " (unavailable)", sizeof(value.name));
 	}
+
+	int32 available = info.control_count;
+	int32 count = min_c(available, (int32)B_COUNT_OF(controls));
+	if (count < 0)
+		count = 0;
+	if (count > 0) {
+		if (info.controls == NULL || !IS_USER_ADDRESS(info.controls)
+			|| user_memcpy(info.controls, controls,
+				count * sizeof(multi_mix_control)) != B_OK) {
+			return B_BAD_ADDRESS;
+		}
+	}
+	info.control_count = count;
 	return copy_out(arg, info);
 }
 
 
+/*!	The media node reads a two-item discrete parameter through the "enable"
+	member and wider ones through "mux"; both share the low byte, so the
+	value is written as a clean 0/1 and read back from the low byte only.
+*/
 static status_t
-get_mix(PwmdacDevice* device, void* arg)
+get_mix(Jh7110AudioDevice* device, void* arg)
 {
-	// No hardware gain; the media mixer does volume in software.
 	multi_mix_value_info info;
 	if (copy_in(info, arg) != B_OK)
 		return B_BAD_ADDRESS;
-	info.item_count = 0;
-	return copy_out(arg, info);
+	if (info.item_count <= 0)
+		return B_OK;
+	if (info.item_count > 16 || info.values == NULL
+		|| !IS_USER_ADDRESS(info.values))
+		return B_BAD_VALUE;
+
+	for (int32 i = 0; i < info.item_count; i++) {
+		multi_mix_value value;
+		if (user_memcpy(&value, &info.values[i], sizeof(value)) != B_OK)
+			return B_BAD_ADDRESS;
+		if (value.id != MIX_OUTPUT_MUX_ID)
+			continue;
+		value._reserved_[0] = 0;
+		value._reserved_[1] = 0;
+		value.mux = device->Output();
+		if (user_memcpy(&info.values[i], &value, sizeof(value)) != B_OK)
+			return B_BAD_ADDRESS;
+	}
+	return B_OK;
 }
 
 
 static status_t
-get_buffers(PwmdacDevice* device, void* arg)
+set_mix(Jh7110AudioDevice* device, void* arg)
+{
+	multi_mix_value_info info;
+	if (copy_in(info, arg) != B_OK)
+		return B_BAD_ADDRESS;
+	if (info.item_count <= 0)
+		return B_OK;
+	if (info.item_count > 16 || info.values == NULL
+		|| !IS_USER_ADDRESS(info.values))
+		return B_BAD_VALUE;
+
+	status_t status = B_OK;
+	for (int32 i = 0; i < info.item_count; i++) {
+		multi_mix_value value;
+		if (user_memcpy(&value, &info.values[i], sizeof(value)) != B_OK)
+			return B_BAD_ADDRESS;
+		if (value.id != MIX_OUTPUT_MUX_ID)
+			continue;
+		uint32 output = value.mux & 0xff;
+		if (output >= AUDIO_OUTPUT_COUNT)
+			return B_BAD_VALUE;
+		status = device->SetOutput(output, true);
+	}
+	return status;
+}
+
+
+static status_t
+get_buffers(Jh7110AudioDevice* device, void* arg)
 {
 	multi_buffer_list list;
 	if (copy_in(list, arg) != B_OK)
 		return B_BAD_ADDRESS;
 
 	int32 count = list.request_playback_buffers;
-	if (count < PWMDAC_MIN_BUFFERS || count > PWMDAC_MAX_BUFFERS)
-		count = PWMDAC_MIN_BUFFERS;
+	if (count < AUDIO_MIN_BUFFERS || count > AUDIO_MAX_BUFFERS)
+		count = AUDIO_MIN_BUFFERS;
 	uint32 frames = list.request_playback_buffer_size;
 	if (frames == 0)
-		frames = PWMDAC_DEFAULT_FRAMES;
-	if (frames < PWMDAC_MIN_FRAMES)
-		frames = PWMDAC_MIN_FRAMES;
-	if (frames > PWMDAC_MAX_FRAMES)
-		frames = PWMDAC_MAX_FRAMES;
+		frames = AUDIO_DEFAULT_FRAMES;
+	if (frames < AUDIO_MIN_FRAMES)
+		frames = AUDIO_MIN_FRAMES;
+	if (frames > AUDIO_MAX_FRAMES)
+		frames = AUDIO_MAX_FRAMES;
 	if (list.request_playback_channels != 0
 		&& list.request_playback_channels != 2) {
 		INFO("%s: %" B_PRId32 " playback channels requested, giving 2\n",
@@ -249,7 +326,7 @@ get_buffers(PwmdacDevice* device, void* arg)
 		char* base = (char*)device->UserBuffer(i);
 		for (int32 c = 0; c < 2; c++) {
 			descs[c].base = base + 2 * c;
-			descs[c].stride = PWMDAC_FRAME_BYTES;
+			descs[c].stride = AUDIO_FRAME_BYTES;
 		}
 		if (user_memcpy(userDescs, descs, sizeof(descs)) != B_OK)
 			return B_BAD_ADDRESS;
@@ -260,7 +337,7 @@ get_buffers(PwmdacDevice* device, void* arg)
 
 
 static status_t
-buffer_exchange(PwmdacDevice* device, void* arg)
+buffer_exchange(Jh7110AudioDevice* device, void* arg)
 {
 	multi_buffer_info info;
 	if (copy_in(info, arg) != B_OK)
@@ -287,9 +364,23 @@ buffer_exchange(PwmdacDevice* device, void* arg)
 
 
 status_t
-pwmdac_multi_control(PwmdacDevice* device, uint32 op, void* arg,
-	size_t length)
+jh7110_audio_multi_control(Jh7110AudioDevice* device, void* cookie,
+	uint32 op, void* arg, size_t length)
 {
+	// Streaming ioctls belong to one opener at a time.
+	switch (op) {
+		case B_MULTI_SET_GLOBAL_FORMAT:
+		case B_MULTI_GET_BUFFERS:
+		case B_MULTI_BUFFER_EXCHANGE:
+		case B_MULTI_BUFFER_FORCE_STOP:
+		{
+			status_t status = device->ClaimStream(cookie);
+			if (status != B_OK)
+				return status;
+			break;
+		}
+	}
+
 	switch (op) {
 		case B_MULTI_GET_DESCRIPTION:
 			return get_description(device, arg);
@@ -311,7 +402,7 @@ pwmdac_multi_control(PwmdacDevice* device, uint32 op, void* arg,
 		case B_MULTI_GET_MIX:
 			return get_mix(device, arg);
 		case B_MULTI_SET_MIX:
-			return B_OK;
+			return set_mix(device, arg);
 		case B_MULTI_LIST_MIX_CHANNELS:
 		case B_MULTI_LIST_MIX_CONNECTIONS:
 			return B_ERROR;

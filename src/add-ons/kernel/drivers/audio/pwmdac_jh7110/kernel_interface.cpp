@@ -3,18 +3,20 @@
  *
  * Copyright 2026, The Beacon Project.
  *
- * Device manager glue for the JH7110 PWM-DAC driver: binds to the
- * pwmdac@100b0000 FDT node, publishes audio/hmulti/pwmdac/<n> and forwards
- * the device hooks to the multi_audio layer. The FDT attach pattern follows
+ * Device manager glue for the JH7110 audio driver (jack + HDMI): binds to
+ * the pwmdac@100b0000 FDT node, publishes audio/hmulti/pwmdac/<n> (one
+ * device for both outputs) and forwards the device hooks to the
+ * multi_audio layer. The FDT attach pattern follows
  * Beacon's dwmac/dw_mmc drivers; the driver/device module split follows
  * Haiku's virtio_sound (MIT).
  *
  * This file contains no third-party code, but the add-on links the
- * GPL-2.0-only Pwmdac.cpp, so the linked add-on is GPL-2.0-only.
+ * GPL-2.0-only Pwmdac.cpp and I2sHdmi.cpp, so the linked add-on is
+ * GPL-2.0-only.
  */
 
 
-#include "Pwmdac.h"
+#include "Jh7110Audio.h"
 
 #include <new>
 #include <stdio.h>
@@ -119,18 +121,18 @@ pwmdac_register_device(device_node* parent)
 {
 	device_attr attrs[] = {
 		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = "JH7110 PWM-DAC audio" }},
+			{ .string = "JH7110 audio (jack + HDMI)" }},
 		{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_KEEP_DRIVER_LOADED }},
 		{}
 	};
-	return gDeviceManager->register_node(parent, PWMDAC_DRIVER_MODULE_NAME,
+	return gDeviceManager->register_node(parent, JH7110_AUDIO_DRIVER_MODULE_NAME,
 		attrs, NULL, NULL);
 }
 
 
 struct pwmdac_driver {
 	device_node*	node;
-	PwmdacDevice*	device;
+	Jh7110AudioDevice*	device;
 };
 
 
@@ -140,13 +142,13 @@ pwmdac_init_driver(device_node* node, void** cookie)
 	device_node* fdtNode = gDeviceManager->get_parent_node(node);
 	fdt_device_module_info* module;
 	fdt_device* fdt;
-	PwmdacConfig config;
+	Jh7110AudioConfig config;
 	memset(&config, 0, sizeof(config));
 	bool ok = get_fdt(fdtNode, module, fdt);
 	if (ok) {
 		uint64 base = 0, size = 0;
 		ok = module->get_reg(fdt, 0, &base, &size) && size != 0;
-		config.physBase = base;
+		config.pwmdacBase = base;
 		config.dtDisabled = is_disabled(module, fdt);
 	}
 	gDeviceManager->put_node(fdtNode);
@@ -155,10 +157,10 @@ pwmdac_init_driver(device_node* node, void** cookie)
 		return B_BAD_VALUE;
 	}
 	snprintf(config.name, sizeof(config.name), "pwmdac@%" B_PRIxPHYSADDR,
-		config.physBase);
+		config.pwmdacBase);
 
 	pwmdac_driver* driver = new(std::nothrow) pwmdac_driver;
-	PwmdacDevice* device = new(std::nothrow) PwmdacDevice();
+	Jh7110AudioDevice* device = new(std::nothrow) Jh7110AudioDevice();
 	if (driver == NULL || device == NULL) {
 		delete driver;
 		delete device;
@@ -191,7 +193,7 @@ static status_t
 pwmdac_register_child_devices(void* cookie)
 {
 	pwmdac_driver* driver = (pwmdac_driver*)cookie;
-	int32 id = gDeviceManager->create_id(PWMDAC_DEVICE_ID_GENERATOR);
+	int32 id = gDeviceManager->create_id(JH7110_AUDIO_DEVICE_ID_GENERATOR);
 	if (id < 0)
 		return id;
 
@@ -199,11 +201,11 @@ pwmdac_register_child_devices(void* cookie)
 	char name[64];
 	snprintf(name, sizeof(name), "audio/hmulti/pwmdac/%" B_PRId32, id + 1);
 	status_t status = gDeviceManager->publish_device(driver->node, name,
-		PWMDAC_DEVICE_MODULE_NAME);
+		JH7110_AUDIO_DEVICE_MODULE_NAME);
 	if (status != B_OK) {
 		ERROR("%s: cannot publish /dev/%s: %s\n", driver->device->Name(),
 			name, strerror(status));
-		gDeviceManager->free_id(PWMDAC_DEVICE_ID_GENERATOR, id);
+		gDeviceManager->free_id(JH7110_AUDIO_DEVICE_ID_GENERATOR, id);
 	} else
 		INFO("%s: published /dev/%s\n", driver->device->Name(), name);
 	return status;
@@ -227,33 +229,41 @@ pwmdac_uninit_device(void* deviceCookie)
 }
 
 
+struct audio_open_cookie {
+	Jh7110AudioDevice*	device;
+};
+
+
 static status_t
 pwmdac_open(void* deviceCookie, const char* path, int openMode,
 	void** _cookie)
 {
-	PwmdacDevice* device = (PwmdacDevice*)deviceCookie;
-	status_t status = device->Open();
-	if (status != B_OK) {
-		INFO("%s: open refused (already open)\n", device->Name());
-		return status;
-	}
-	*_cookie = device;
+	// Any number of openers; the first streaming ioctl claims the stream
+	// (see multi.cpp), so control-only tools work beside the media server.
+	audio_open_cookie* cookie = new(std::nothrow) audio_open_cookie;
+	if (cookie == NULL)
+		return B_NO_MEMORY;
+	cookie->device = (Jh7110AudioDevice*)deviceCookie;
+	*_cookie = cookie;
 	return B_OK;
 }
 
 
 static status_t
-pwmdac_close(void* cookie)
+pwmdac_close(void* _cookie)
 {
-	((PwmdacDevice*)cookie)->Close();
+	audio_open_cookie* cookie = (audio_open_cookie*)_cookie;
+	cookie->device->ReleaseStream(cookie);
 	return B_OK;
 }
 
 
 static status_t
-pwmdac_free(void* cookie)
+pwmdac_free(void* _cookie)
 {
-	((PwmdacDevice*)cookie)->DeleteBuffers();
+	audio_open_cookie* cookie = (audio_open_cookie*)_cookie;
+	cookie->device->FreeStream(cookie);
+	delete cookie;
 	return B_OK;
 }
 
@@ -276,9 +286,11 @@ pwmdac_write(void* cookie, off_t position, const void* buffer,
 
 
 static status_t
-pwmdac_control(void* cookie, uint32 op, void* buffer, size_t length)
+pwmdac_control(void* _cookie, uint32 op, void* buffer, size_t length)
 {
-	return pwmdac_multi_control((PwmdacDevice*)cookie, op, buffer, length);
+	audio_open_cookie* cookie = (audio_open_cookie*)_cookie;
+	return jh7110_audio_multi_control(cookie->device, cookie, op, buffer,
+		length);
 }
 
 
@@ -287,7 +299,7 @@ pwmdac_control(void* cookie, uint32 op, void* buffer, size_t length)
 
 static driver_module_info sPwmdacDriver = {
 	{
-		PWMDAC_DRIVER_MODULE_NAME,
+		JH7110_AUDIO_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
@@ -302,9 +314,9 @@ static driver_module_info sPwmdacDriver = {
 };
 
 
-static device_module_info sPwmdacDevice = {
+static device_module_info sJh7110AudioDevice = {
 	{
-		PWMDAC_DEVICE_MODULE_NAME,
+		JH7110_AUDIO_DEVICE_MODULE_NAME,
 		0,
 		NULL
 	},
@@ -334,6 +346,6 @@ _EXPORT module_dependency module_dependencies[] = {
 
 _EXPORT module_info* modules[] = {
 	(module_info*)&sPwmdacDriver,
-	(module_info*)&sPwmdacDevice,
+	(module_info*)&sJh7110AudioDevice,
 	NULL
 };
