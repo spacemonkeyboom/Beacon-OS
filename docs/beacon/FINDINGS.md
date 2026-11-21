@@ -84,6 +84,36 @@ so far; worth fixing upstream.)
 net80211 selects the BSS and runs the handshake; firmware roaming can change
 the peer underneath it. We set `roam_off 1` (as air/OS does).
 
+## Ethernet (Synopsys DesignWare EQoS `dwmac`, JH7110 gmac0)
+
+### Link never reported up; unused gmac1 left powered; no DMA recovery — pending
+* **Seen:** with `dwmac` in rv15-rv18, `/dev/net/dwmac/0: link down` once
+  and never a link change; gmac1 attached as far as "DMA software reset
+  stuck" and "no PHY answers on MDIO" and failed. First-boot panics in
+  rv16/rv18 (both before the interface was opened) got dwmac dropped from
+  rv19 on; never proven to be dwmac, and the stale-TLB and X512 MMU fixes
+  (PTE A/D update, PTE race barrier) since then match those panics better.
+* **Why:** (1) Haiku's ethernet module registers `ETHER_SET_LINK_STATE_SEM`
+  and then only calls `ETHER_GET_LINK_STATE` when that semaphore is
+  released, so a driver that reads the PHY only in `GET_LINK_STATE` never
+  sees the link come up. (2) The Orange Pi RV has no PHY on gmac1 (mainline
+  DT disables it; the vendor U-Boot DT enables it); a failed attach left its
+  clocks open and its reset released. (3) A fatal bus error or stuck ring
+  needed close/reopen; with the link down a full TX ring blocked the stack.
+* **Fix:** a per-device watchdog thread (1 s): PHY poll + link semaphore,
+  stall checks (DMA_DEBUG_STATUS0 RX/TX "stopped", TX OWN not cleared for
+  3 s with link, fatal bus error) -> stop, DMA software reset, fresh rings;
+  RX "suspended" re-arms the tail; one stats line per minute. Attach
+  failure and uninit stop the DMA, assert the resets and gate the clocks the
+  driver opened before the DMA memory is freed; a controller firmware left
+  out of reset is held in reset before any clock is opened. TX returns
+  `ENETDOWN` instead of blocking when the ring is full without link. X512's
+  MIT `visionfive2` dwmac (2023) was reviewed and not used: it is a
+  skeleton (`Start()` returns `B_ERROR`, no PHY setup, no cache
+  maintenance, `SendData` unimplemented, RX uses the TX ring).
+* **File:** `src/add-ons/kernel/drivers/network/ether/dwmac/` (README.md has
+  the expected serial lines and test steps).
+
 ## Media kit
 
 ### `media_server` hang at boot: missing `libgame.so` — confirmed

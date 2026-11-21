@@ -334,6 +334,11 @@ read_config(device_node* fdtNode, DwmacConfig& config)
 	strlcpy(config.phyMode, mode != NULL && length > 0 ? mode : "rgmii-id",
 		sizeof(config.phyMode));
 
+	// Mainline Linux DTs (Orange Pi RV, VisionFive 2) set this on gmac0;
+	// the vendor U-Boot DT does not.
+	config.txUseRgmiiClk = module->get_prop(device,
+		"starfive,tx-use-rgmii-clk", &length) != NULL;
+
 	const char* macProps[] = { "local-mac-address", "mac-address" };
 	for (int i = 0; i < 2 && !config.hasMac; i++) {
 		const void* mac = module->get_prop(device, macProps[i], &length);

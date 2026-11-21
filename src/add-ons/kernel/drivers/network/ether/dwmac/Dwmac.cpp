@@ -16,7 +16,9 @@
  *
  * Modified for Beacon/Haiku, 2026 (The Beacon Project): interrupt driven
  * rings, 64-byte descriptor stride with explicit SiFive ccache maintenance,
- * Haiku net_buffer interface, serial diagnostics.
+ * Haiku net_buffer interface, serial diagnostics; 2026-11-20 (eth2):
+ * watchdog (link poll, stall detection, DMA reset, per-minute stats) and
+ * power-down on attach failure/uninit.
  */
 
 
@@ -49,6 +51,16 @@ static const uint32 kMaxFrameSize = 1514;	// without FCS (stripped by ACS/CST)
 static const uint32 kLogPackets = 8;		// first N RX/TX frames are logged
 static const uint32 kLogErrors = 16;
 static const bigtime_t kWaitTimeout = 100000;	// poll fallback, 100 ms
+static const uint32 kStatsTicks = 60;		// watchdog ticks (1 s) per stats line
+static const uint32 kTxStallTicks = 3;		// TX ring not moving for 3 s
+static const uint32 kDmaStoppedTicks = 2;	// RX/TX DMA "stopped" seen twice
+static const bigtime_t kRestartBackoff = 5000000;	// >= 5 s between resets
+static const uint32 kLogRestarts = 16;		// first N resets are logged in full
+
+// DMA_DEBUG_STATUS0 process states (Linux dwmac4_dma.h)
+static const uint32 kRpsStopped = 0;
+static const uint32 kRpsSuspended = 4;		// receive buffer unavailable
+static const uint32 kTpsStopped = 0;
 
 static const uint32 kDmaIntMask = kDmaChIntNis | kDmaChIntAis | kDmaChIntRi
 	| kDmaChIntTi | kDmaChIntRbu | kDmaChIntFbe;
@@ -156,7 +168,26 @@ DwmacDevice::DwmacDevice()
 	fSpuriousIrqs(0),
 	fFatalStatus(0),
 	fFatalLogged(false),
-	fPollWarned(false)
+	fPollWarned(false),
+	fRstAssert(NULL),
+	fRstStatus(NULL),
+	fRstMask(0),
+	fResetReleased(false),
+	fEnabledClockCount(0),
+	fWatchdog(-1),
+	fWatchdogQuit(false),
+	fTxStallIndex(0),
+	fTxStallTicks(0),
+	fRxStoppedTicks(0),
+	fTxStoppedTicks(0),
+	fStalls(0),
+	fRestarts(0),
+	fRestartFailures(0),
+	fRxKicks(0),
+	fMissedFrames(0),
+	fLastRxPackets(0),
+	fLastTxPackets(0),
+	fLastRestart(0)
 {
 	memset(&fConfig, 0, sizeof(fConfig));
 	memset(fMac, 0, sizeof(fMac));
@@ -168,15 +199,27 @@ DwmacDevice::DwmacDevice()
 
 DwmacDevice::~DwmacDevice()
 {
+	// Order matters: no thread may touch the rings, then the controller is
+	// stopped and held in reset, and only then is the DMA memory freed.
+	if (fWatchdog >= 0) {
+		fWatchdogQuit = true;
+		status_t result;
+		wait_for_thread(fWatchdog, &result);
+		fWatchdog = -1;
+	}
 	if (fStarted) {
 		MutexLocker _(fPhyLock);
+		MutexLocker rx(fRxLock);
+		MutexLocker tx(fTxLock);
 		_Stop();
 	}
 	if (fRegs != NULL)
 		_Write(kDmaCh0IntEnable, 0);
 	if (fInterruptInstalled) {
 		remove_io_interrupt_handler(fConfig.irq, _InterruptHandler, this);
+		fInterruptInstalled = false;
 	}
+	_PowerDown(fDmaArea >= 0 ? "uninit" : "attach failed");
 	if (fRxSem >= 0)
 		delete_sem(fRxSem);
 	if (fTxSem >= 0)
@@ -243,8 +286,12 @@ DwmacDevice::_Jh7110ClockOn(volatile uint32* crg, uint32 index,
 	const char* what)
 {
 	uint32 before = crg[index];
-	if ((before & kCrgEnable) == 0)
+	if ((before & kCrgEnable) == 0) {
 		crg[index] = before | kCrgEnable;
+		if (fEnabledClockCount < (int32)(sizeof(fEnabledClocks)
+				/ sizeof(fEnabledClocks[0])))
+			fEnabledClocks[fEnabledClockCount++] = &crg[index];
+	}
 	uint32 after = crg[index];
 	INFO("%s: clock %-10s [%3" B_PRIu32 "] %#010" B_PRIx32 " -> %#010" B_PRIx32
 		" (div %" B_PRIu32 ", mux %" B_PRIu32 "%s)%s\n", fConfig.name, what,
@@ -302,6 +349,18 @@ DwmacDevice::_Jh7110Bringup()
 		fConfig.name, index, *rstAssert, *rstStatus, rstMask,
 		(*rstStatus & rstMask) == rstMask ? "out of reset"
 			: "IN RESET (normal after U-Boot eth stop)");
+
+	// If firmware left the controller out of reset, its DMA may still own
+	// descriptors in memory that now belongs to Haiku. Hold it in reset
+	// BEFORE any clock is opened, so it cannot resume and write there; the
+	// pulse below releases it with the clocks running.
+	if ((*rstStatus & rstMask) != 0) {
+		*rstAssert = *rstAssert | rstMask;
+		bool held = reset_wait(rstStatus, rstMask, 0);
+		INFO("%s: firmware left it (partly) out of reset; held in reset "
+			"before opening clocks (status %#010" B_PRIx32 "%s)\n",
+			fConfig.name, *rstStatus, held ? "" : ", did not drop");
+	}
 
 	// PHY interface select (Linux dwmac-starfive.c starfive_dwmac_set_mode,
 	// vendor U-Boot jh7110_gmac_init_1000M). It is sampled at reset, so set
@@ -361,6 +420,10 @@ DwmacDevice::_Jh7110Bringup()
 
 	// Reset pulse with clocks running (deasserting with a gated clock can
 	// hang the reset block, Linux reset-starfive-jh71x0.c).
+	fRstAssert = rstAssert;
+	fRstStatus = rstStatus;
+	fRstMask = rstMask;
+	fResetReleased = true;
 	*rstAssert = *rstAssert | rstMask;
 	if (!reset_wait(rstStatus, rstMask, 0)) {
 		INFO("%s: reset status did not drop while asserting (%#010" B_PRIx32
@@ -377,6 +440,40 @@ DwmacDevice::_Jh7110Bringup()
 	INFO("%s: reset pulse done, status %#010" B_PRIx32 "\n", fConfig.name,
 		*rstStatus);
 	return B_OK;
+}
+
+
+void
+DwmacDevice::_PowerDown(const char* why)
+{
+	// Undo the bring-up: stop the DMA, then (JH7110) assert the resets and
+	// gate the clocks this driver opened. A controller held in reset cannot
+	// master the bus, so its DMA memory may be freed afterwards. Firmware
+	// state (U-Boot gates and resets an unused gmac) is restored too, which
+	// matters for gmac1, which has no PHY on the Orange Pi RV.
+	if (fRegs != NULL && fResetReleased) {
+		_Write(kDmaCh0IntEnable, 0);
+		_ClearBits(kDmaCh0TxControl, kDmaChTxSt);
+		_ClearBits(kDmaCh0RxControl, kDmaChRxSr);
+		_ClearBits(kMacConfig, kMacConfigTe | kMacConfigRe);
+		io_fence();
+		spin(100);
+	}
+	if (fResetReleased && fRstAssert != NULL) {
+		*fRstAssert = *fRstAssert | fRstMask;
+		bool inReset = reset_wait(fRstStatus, fRstMask, 0);
+		fResetReleased = false;
+		INFO("%s: %s: controller held in reset (status %#010" B_PRIx32 "%s)"
+			"\n", fConfig.name, why, *fRstStatus,
+			inReset ? "" : ", status bits did not drop");
+	}
+	for (int32 i = fEnabledClockCount - 1; i >= 0; i--)
+		*fEnabledClocks[i] = *fEnabledClocks[i] & ~(uint32)kCrgEnable;
+	if (fEnabledClockCount > 0) {
+		INFO("%s: %s: %" B_PRId32 " clocks gated again\n", fConfig.name, why,
+			fEnabledClockCount);
+	}
+	fEnabledClockCount = 0;
 }
 
 
@@ -413,6 +510,13 @@ DwmacDevice::_Jh7110SetTxClock(uint32 speed)
 	// through the "tx" clock.
 	if (!fConfig.isJh7110 || fSysCrg == NULL)
 		return;
+	if (fConfig.txUseRgmiiClk) {
+		// Mainline Linux dwmac-starfive.c: no fix_mac_speed with this
+		// property; the TX clock comes from the RGMII side.
+		INFO("%s: TX clock for %" B_PRIu32 " Mbit/s left to hardware "
+			"(starfive,tx-use-rgmii-clk)\n", fConfig.name, speed);
+		return;
+	}
 	uint64 target = speed == 1000 ? 125000000 : speed == 100 ? 25000000
 		: 2500000;
 
@@ -920,6 +1024,19 @@ DwmacDevice::Init(const DwmacConfig& config)
 		fConfig.name, text, fPhyAddress, fPhyId, fConfig.irq,
 		fInterruptInstalled ? "" : " (not installed)",
 		fLinkUp ? "up" : "down");
+
+	// The network stack registers a link-state semaphore and then only asks
+	// for the link when it is released, so the PHY must be polled here.
+	char threadName[B_OS_NAME_LENGTH];
+	snprintf(threadName, sizeof(threadName), "dwmac %s watchdog",
+		fConfig.name);
+	fWatchdog = spawn_kernel_thread(_WatchdogThread, threadName,
+		B_LOW_PRIORITY, this);
+	if (fWatchdog < 0 || resume_thread(fWatchdog) != B_OK) {
+		ERROR("%s: cannot start the watchdog thread; link changes will not "
+			"be seen\n", fConfig.name);
+		fWatchdog = -1;
+	}
 	return B_OK;
 }
 
@@ -966,6 +1083,9 @@ DwmacDevice::_Start()
 	fClosing = false;
 	fFatalStatus = 0;
 	fFatalLogged = false;
+	fTxStallTicks = 0;
+	fRxStoppedTicks = 0;
+	fTxStoppedTicks = 0;
 	_SetupRings();
 
 	// MTL: store and forward, all FIFO RAM to queue 0
@@ -1235,6 +1355,162 @@ DwmacDevice::_UpdateLink(bool log)
 }
 
 
+// #pragma mark - watchdog
+
+
+status_t
+DwmacDevice::_WatchdogThread(void* data)
+{
+	DwmacDevice* device = (DwmacDevice*)data;
+	uint32 tick = 0;
+	while (!device->fWatchdogQuit) {
+		// 1 s in 100 ms steps, so uninit does not wait long
+		for (int i = 0; i < 10 && !device->fWatchdogQuit; i++)
+			snooze(100000);
+		if (device->fWatchdogQuit)
+			break;
+		device->_WatchdogTick(++tick);
+	}
+	return B_OK;
+}
+
+
+void
+DwmacDevice::_WatchdogTick(uint32 tick)
+{
+	MutexLocker phy(fPhyLock);
+	_UpdateLink(true);
+
+	if (fOpenCount > 0 && !fClosing) {
+		MutexLocker rx(fRxLock);
+		MutexLocker tx(fTxLock);
+		if (fStarted)
+			_CheckStall();
+		else if (system_time() - fLastRestart >= kRestartBackoff) {
+			// A reset did not bring the DMA back (e.g. no RGMII RX clock
+			// without a cable); try again.
+			_Restart("DMA still down after an earlier reset");
+		}
+		if (tick % kStatsTicks == 0)
+			_LogStats();
+	}
+}
+
+
+void
+DwmacDevice::_CheckStall()
+{
+	// called with fPhyLock, fRxLock and fTxLock held, DMA started
+	const char* why = NULL;
+	if (fFatalStatus != 0)
+		why = "fatal bus error";
+
+	uint32 debug = _Read(kDmaDebugStatus0);
+	uint32 rps = (debug >> 8) & 0xf;
+	uint32 tps = (debug >> 12) & 0xf;
+
+	// RX and TX DMA must never be "stopped" while started (only SR/ST
+	// clear or a fatal error stops them). Seen twice to skip transitions.
+	fRxStoppedTicks = rps == kRpsStopped ? fRxStoppedTicks + 1 : 0;
+	fTxStoppedTicks = tps == kTpsStopped ? fTxStoppedTicks + 1 : 0;
+	if (why == NULL && fRxStoppedTicks >= kDmaStoppedTicks)
+		why = "RX DMA stopped";
+	if (why == NULL && fTxStoppedTicks >= kDmaStoppedTicks)
+		why = "TX DMA stopped";
+
+	// TX: in-flight descriptors that the DMA does not complete while the
+	// link is up (the MAC transmitter only runs with link).
+	_ReclaimTx();
+	if (fTxDirty != fTxNext && fLinkUp) {
+		if (fTxDirty == fTxStallIndex)
+			fTxStallTicks++;
+		else {
+			fTxStallIndex = fTxDirty;
+			fTxStallTicks = 0;
+		}
+		if (why == NULL && fTxStallTicks >= kTxStallTicks)
+			why = "TX descriptor stall (DMA keeps OWN)";
+	} else
+		fTxStallTicks = 0;
+
+	// RX suspended (no buffer): every descriptor before fRxNext is owned by
+	// the DMA again, so re-arm the tail; harmless if the ring is just full.
+	if (why == NULL && rps == kRpsSuspended) {
+		fRxKicks++;
+		_Write(kDmaCh0RxTail, low32(_Phys((const void*)_RxDesc(
+			(fRxNext + kRxCount - 1) % kRxCount))));
+	}
+
+	fMissedFrames += _Read(kDmaCh0MissFrames) & 0x7ff;
+
+	if (why == NULL)
+		return;
+	fStalls++;
+	if (system_time() - fLastRestart < kRestartBackoff)
+		return;
+	_Restart(why);
+}
+
+
+void
+DwmacDevice::_Restart(const char* why)
+{
+	// called with fPhyLock, fRxLock and fTxLock held. Frames in the rings
+	// are lost; the readers/writers only see the rings again after _Start.
+	fRestarts++;
+	fLastRestart = system_time();
+	bool log = fRestarts <= kLogRestarts || fRestarts % 100 == 0;
+	if (log) {
+		ERROR("%s: reset #%" B_PRIu32 ": %s (CH0 status %#010" B_PRIx32
+			" debug %#010" B_PRIx32 " cur tx %#010" B_PRIx32 " rx %#010"
+			B_PRIx32 ", tx next %" B_PRIu32 " dirty %" B_PRIu32 ", rx next %"
+			B_PRIu32 ")\n", fConfig.name, fRestarts, why,
+			fRegs != NULL ? _Read(kDmaCh0Status) : 0,
+			fRegs != NULL ? _Read(kDmaDebugStatus0) : 0,
+			fRegs != NULL ? _Read(kDmaCh0CurTxDesc) : 0,
+			fRegs != NULL ? _Read(kDmaCh0CurRxDesc) : 0, fTxNext, fTxDirty,
+			fRxNext);
+	}
+	_Stop();
+	// _Start() does the software reset (clears every DMA/MTL/MAC register
+	// and re-masks the MMC interrupts) before loading fresh rings.
+	fResetPending = true;
+	status_t status = _Start();
+	if (status != B_OK) {
+		fRestartFailures++;
+		if (log) {
+			ERROR("%s: reset #%" B_PRIu32 " failed: %s; retrying in %d s\n",
+				fConfig.name, fRestarts, strerror(status),
+				(int)(kRestartBackoff / 1000000));
+		}
+	} else if (log)
+		INFO("%s: reset #%" B_PRIu32 " done, DMA running\n", fConfig.name,
+			fRestarts);
+	release_sem_etc(fRxSem, 1, B_DO_NOT_RESCHEDULE);
+	release_sem_etc(fTxSem, 1, B_DO_NOT_RESCHEDULE);
+}
+
+
+void
+DwmacDevice::_LogStats()
+{
+	// called with fPhyLock, fRxLock and fTxLock held; one line per minute
+	INFO("%s: stats: link %s %" B_PRIu32 "%s, rx %" B_PRIu32 " (+%" B_PRIu32
+		") errors %" B_PRIu32 " missed %" B_PRIu32 ", tx %" B_PRIu32 " (+%"
+		B_PRIu32 ") errors %" B_PRIu32 ", irqs %" B_PRId32 " (rx %" B_PRId32
+		" tx %" B_PRId32 " rbu %" B_PRId32 " spurious %" B_PRId32 "), "
+		"descriptor stalls %" B_PRIu32 ", resets %" B_PRIu32 " (failed %"
+		B_PRIu32 "), rx re-arms %" B_PRIu32 ", dma %s\n", fConfig.name,
+		fLinkUp ? "up" : "down", fLinkSpeed, fLinkFullDuplex ? "FD" : "HD",
+		fRxPackets, fRxPackets - fLastRxPackets, fRxErrors, fMissedFrames,
+		fTxPackets, fTxPackets - fLastTxPackets, fTxErrors, fIrqCount,
+		fRxIrqs, fTxIrqs, fRbuCount, fSpuriousIrqs, fStalls, fRestarts,
+		fRestartFailures, fRxKicks, fStarted ? "running" : "DOWN");
+	fLastRxPackets = fRxPackets;
+	fLastTxPackets = fTxPackets;
+}
+
+
 // #pragma mark - interrupt
 
 
@@ -1332,14 +1608,25 @@ DwmacDevice::_WaitForRxFrame(uint32& index, uint32& length)
 {
 	// called with fRxLock held; returns with it held
 	while (true) {
-		if (fClosing || !fStarted)
+		if (fClosing || fOpenCount == 0)
 			return B_INTERRUPTED;
-
-		if (fFatalStatus != 0 && !fFatalLogged) {
-			fFatalLogged = true;
-			ERROR("%s: fatal bus error, DMA stopped (CH0 status %#010" B_PRIx32
-				", DMA_STATUS %#010" B_PRIx32 "); close and reopen the "
-				"interface\n", fConfig.name, fFatalStatus, _Read(kDmaStatus));
+		if (!fStarted || fFatalStatus != 0) {
+			// The watchdog is resetting the DMA (or will within a second).
+			if (fFatalStatus != 0 && !fFatalLogged) {
+				fFatalLogged = true;
+				ERROR("%s: fatal bus error, DMA stopped (CH0 status %#010"
+					B_PRIx32 ", DMA_STATUS %#010" B_PRIx32 "); the watchdog "
+					"resets it\n", fConfig.name, fFatalStatus,
+					_Read(kDmaStatus));
+			}
+			if (fNonblocking)
+				return B_WOULD_BLOCK;
+			mutex_unlock(&fRxLock);
+			status_t status = _Wait(fRxSem);
+			mutex_lock(&fRxLock);
+			if (status != B_OK)
+				return status;
+			continue;
 		}
 
 		volatile dwmac_desc* desc = _RxDesc(fRxNext);
@@ -1411,13 +1698,19 @@ DwmacDevice::_WaitForTxSlot(uint32& index)
 {
 	// called with fTxLock held; returns with it held
 	while (true) {
-		if (fClosing || !fStarted)
+		if (fClosing || fOpenCount == 0)
 			return B_INTERRUPTED;
-		_ReclaimTx();
-		if ((fTxNext + 1) % kTxCount != fTxDirty) {
-			index = fTxNext;
-			return B_OK;
+		if (fStarted && fFatalStatus == 0) {
+			_ReclaimTx();
+			if ((fTxNext + 1) % kTxCount != fTxDirty) {
+				index = fTxNext;
+				return B_OK;
+			}
 		}
+		// Ring full (or DMA being reset). With no link the MAC transmitter
+		// is off and nothing drains: drop instead of blocking the stack.
+		if (!fLinkUp)
+			return ENETDOWN;
 		if (fNonblocking)
 			return B_WOULD_BLOCK;
 		mutex_unlock(&fTxLock);

@@ -181,6 +181,7 @@ enum {
 	kDmaMode			= 0x1000,
 	kDmaSysbusMode		= 0x1004,
 	kDmaStatus			= 0x1008,
+	kDmaDebugStatus0	= 0x100c,	// RPS0 bits 11:8, TPS0 bits 15:12
 	kDmaCh0Control		= 0x1100,
 	kDmaCh0TxControl	= 0x1104,
 	kDmaCh0RxControl	= 0x1108,
@@ -410,6 +411,8 @@ struct DwmacConfig {
 	bool		hasMac;
 	uint8		mac[6];
 	const char*	macSource;
+	bool		txUseRgmiiClk;		// DT starfive,tx-use-rgmii-clk (Linux:
+										// TX clock rates left alone)
 };
 
 
@@ -458,6 +461,14 @@ private:
 			uint64				_Jh7110Pll0Hz();
 			void				_Jh7110ClockOn(volatile uint32* crg,
 									uint32 index, const char* what);
+			void				_PowerDown(const char* why);
+
+			// watchdog: link polling, stall detection/reset, stats
+	static	status_t			_WatchdogThread(void* data);
+			void				_WatchdogTick(uint32 tick);
+			void				_CheckStall();
+			void				_Restart(const char* why);
+			void				_LogStats();
 
 			status_t			_ResetDma();
 			status_t			_FindPhy();
@@ -570,6 +581,33 @@ private:
 			uint32				fFatalStatus;
 			bool				fFatalLogged;
 			bool				fPollWarned;
+
+			// Power state (JH7110): what this driver changed, so attach
+			// failure and uninit put the controller back into reset with
+			// the clocks it opened gated again, and no DMA can reach freed
+			// memory.
+			volatile uint32*	fRstAssert;
+			volatile uint32*	fRstStatus;
+			uint32				fRstMask;
+			bool				fResetReleased;
+			volatile uint32*	fEnabledClocks[8];
+			int32				fEnabledClockCount;
+
+			// watchdog
+			thread_id			fWatchdog;
+			volatile bool		fWatchdogQuit;
+			uint32				fTxStallIndex;
+			uint32				fTxStallTicks;
+			uint32				fRxStoppedTicks;
+			uint32				fTxStoppedTicks;
+			uint32				fStalls;
+			uint32				fRestarts;
+			uint32				fRestartFailures;
+			uint32				fRxKicks;
+			uint32				fMissedFrames;
+			uint32				fLastRxPackets;
+			uint32				fLastTxPackets;
+			bigtime_t			fLastRestart;
 };
 
 

@@ -14,9 +14,41 @@ StarFive JH7110 (Orange Pi RV, VisionFive 2):
 
 PHYs: Motorcomm YT8531 over RGMII ("rgmii-id").
 
-Status: build-tested only (riscv64 cross-compile with -Werror, link-checked
-against kernel_riscv64 exports by `~/beacon/tools/eth-compile-check.sh`).
-It has not been run on hardware yet.
+Status (2026-11-20, branch beacon-eth2): **pending hardware test**. Attach
+ran on the board in rv14-rv18 (clocks, reset, PHY ID 0x4f51e91b, rings); no
+packet has been exchanged yet. Build-tested with -Werror and link-checked
+against kernel_riscv64 exports by `~/beacon/tools/eth2-compile-check.sh`.
+Back in the image (`build/jam/packages/Haiku`, `dwmac@riscv64`, so the
+minimum and the nightly/regular riscv64 images both carry it).
+
+### eth2 changes (why it was left out, and what changed)
+
+dwmac was dropped from rv19 because rv16/rv18 panicked on first boot. Those
+panics happened before the interface was opened (DMA not started, ring
+registers zero) and look like the RISC-V stale-TLB / PTE-race bugs fixed
+since. The review found real bugs anyway, now fixed:
+
+* Link was never seen: the stack registers `ETHER_SET_LINK_STATE_SEM` and
+  then only asks for the link when the semaphore is released. A watchdog
+  thread now polls the PHY once a second.
+* gmac1 (no PHY on the Orange Pi RV) failed attach with clocks open and its
+  reset released. Attach failure and uninit now stop the DMA, assert the
+  resets and gate the clocks this driver opened (`_PowerDown`), before the
+  DMA memory is freed. A controller firmware left out of reset is held in
+  reset before any clock is opened.
+* No recovery: fatal bus errors, RX/TX DMA "stopped", or TX descriptors the
+  DMA never completes (3 s with link) now stop, soft-reset and restart the
+  DMA with fresh rings (at most every 5 s). RX "suspended" re-arms the tail.
+* Without link a full TX ring blocked the stack: it now returns `ENETDOWN`.
+* DT `starfive,tx-use-rgmii-clk` (mainline DTs) leaves TX clock rates alone,
+  like Linux. The vendor U-Boot DT (what Haiku gets today) lacks it, so the
+  vendor U-Boot rate handling stays in use.
+
+X512's MIT driver (X547/haiku `visionfive2`, 2023) was compared and not
+used: it is an unfinished skeleton (`Start()` returns `B_ERROR`, empty clock/
+reset hooks, no PHY or link code, no cache maintenance, `SendData` returns
+`B_ERROR`, `Recv` uses the TX ring). Its register structs would not make
+this driver simpler; nothing was copied from it.
 
 ## Why a native driver
 
@@ -115,6 +147,13 @@ flushes (a coherent-only mode).
 
 ## Interrupts
 
+### Watchdog
+
+One kernel thread per controller ("dwmac ethernet@16030000 watchdog", low
+priority), from attach to uninit, ticking once a second: PHY link poll
+(releases the stack's link semaphore on a change), and while open the stall
+checks above plus one `stats:` line per minute.
+
 PLIC "macirq" only. Channel 0 RI, TI, RBU, FBE (+ NIS/AIS summaries) are
 enabled; MAC and MMC-counter interrupts are masked. The interrupt only
 wakes the threads; every wait is capped at 100 ms and the rings are polled
@@ -163,9 +202,45 @@ When net_server opens the interface:
 The first 8 TX and RX frames are logged; the first 16 RX drops / TX errors
 are logged with their descriptor words.
 
+gmac1 on the Orange Pi RV (no PHY) is expected to fail and power down:
+
+    dwmac: ERROR: ethernet@16040000: no PHY answers on MDIO (addresses 0-31)
+    dwmac: ERROR: ethernet@16040000: attach failed: No such device
+    dwmac: ethernet@16040000: attach failed: controller held in reset (status ..)
+    dwmac: ethernet@16040000: attach failed: 5 clocks gated again
+
+Once a minute while open (bounded, one line):
+
+    dwmac: ethernet@16030000: stats: link up 1000FD, rx <n> (+<n>) errors 0 missed 0, tx <n> (+<n>) errors 0, irqs <n> (rx .. tx .. rbu .. spurious ..), descriptor stalls 0, resets 0 (failed 0), rx re-arms <n>, dma running
+
+On a stall (first 16 logged in full, then every 100th):
+
+    dwmac: ERROR: ethernet@16030000: reset #1: TX descriptor stall (DMA keeps OWN) (CH0 status .. debug .. cur tx .. rx .., tx next .. dirty .., rx next ..)
+    dwmac: ethernet@16030000: stopped (...)
+    dwmac: ethernet@16030000: DMA software reset done after ~<n> ms
+    dwmac: ethernet@16030000: reset #1 done, DMA running
+
+## Test steps (board)
+
+1. Boot the image with a cable from gmac0 (the only RJ45) to a router with
+   DHCP. Capture serial; `grep dwmac:` must show the attach lines above,
+   gmac1 powered down, then `open`, `started`, `link up, 1000 Mbit/s`.
+2. Terminal: `ifconfig` -> `/dev/net/dwmac/0` with the MAC from the DT,
+   "Link up" and (after a few seconds) an IPv4 address from DHCP. If not:
+   `ifconfig /dev/net/dwmac/0 auto-config`.
+3. `ping -c 3 8.8.8.8` (and the router IP) -> 0% loss.
+4. Throughput without iperf: `wget -O /dev/null http://speedtest.tele2.net/100MB.zip`
+   (or any large file on the LAN); note the rate. Then unplug for 5 s and
+   replug: expect `link down` / `link up` lines and a working ping again.
+5. Leave it 2+ minutes and check the `stats:` lines: errors, stalls and
+   resets should stay 0; `rx re-arms` may grow under load (harmless).
+6. If Wi-Fi is also up, disable it (`ifconfig <wlan> down`) for steps 3-4 so
+   traffic takes the Ethernet route.
+
+
 ## Known gaps
 
-* Not run on hardware yet.
+* No packet exchanged on hardware yet (attach only).
 * 10/100 Mbit/s: the GTX divider (max 15 from PLL0) cannot make 25 MHz or
   2.5 MHz. The driver sets the MAC speed bits and the rmii_rtx divider like
   vendor U-Boot, warns, and leaves the TX mux as firmware set it. Gigabit is
@@ -175,8 +250,9 @@ are logged with their descriptor words.
 * No checksum offload, TSO, jumbo frames, VLAN filtering, EEE/LPI, PTP or
   Wake-on-LAN. All multicast is accepted (no hash filter).
 * No PHY interrupt (GPIO); link changes are seen within about a second.
-* A fatal bus error stops the DMA; it is logged and needs the interface to
-  be closed and reopened.
+* A fatal bus error or a stall resets the DMA (frames in the rings are
+  lost). If the soft reset itself stalls (no RGMII RX clock), the watchdog
+  retries every 5 s.
 * The MAC fallback is a fixed made-up address when the DT has none.
 * Reading the PHY child DT node uses a struct that mirrors the FDT bus
   manager's private `fdt_device` (only `node` is used). If that struct

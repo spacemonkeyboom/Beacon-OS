@@ -69,3 +69,18 @@ register offsets as used by Linux `stmmac_mmc_core.c` / `common.h`.
 |------|----------|
 | src/add-ons/kernel/drivers/network/ether/virtio/virtio_net.cpp | driver/device module split, ioctl set, net_buffer receive/send pattern |
 | src/add-ons/kernel/busses/mmc/dw_mmc (Beacon) | FDT attach pattern, big-endian property reads, JH7110 CRG access style |
+
+### eth2 additions (2026-11-20)
+
+| Source | Used for |
+|--------|----------|
+| Linux v6.12 `dwmac4_dma.h` (GPL-2.0-only) | DMA_DEBUG_STATUS0 (0x100c) RPS0/TPS0 fields and process-state values used by the watchdog |
+| Linux `jh7110-orangepi-rv.dts` (GPL-2.0 OR MIT, `~/beacon/refs/jh7110/linux/master`) and `dwmac-starfive.c` | Facts: only gmac0 is enabled on the Orange Pi RV; `starfive,tx-use-rgmii-clk` means no TX clock rate changes |
+| Haiku `src/add-ons/kernel/network/devices/ethernet/ethernet.cpp` (MIT) | Fact: the stack waits on the link-state semaphore instead of polling, and frees the buffer when `ETHER_SEND_NET_BUFFER` fails |
+
+Reviewed, **not used**: X512's MIT dwmac/StarfiveClock/StarfiveReset from
+X547/haiku branch `visionfive2` (2023, saved in
+`~/beacon/refs/rv-ports-2026-11-20/x547-visionfive2-src/`). It is an
+unfinished skeleton, so no code was copied and its licence does not apply
+here. The watchdog, power-down and stall-reset code is new Beacon code inside
+the GPL-2.0-only `Dwmac.cpp`.
