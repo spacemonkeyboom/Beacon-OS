@@ -56,7 +56,7 @@
 #include "bwfm_haiku.h"
 #endif
 
-/* #define BWFM_DEBUG */
+#define BWFM_DEBUG	/* Beacon: on while Wi-Fi join is debugged */
 #ifdef BWFM_DEBUG
 #define DPRINTF(x)	do { if (bwfm_debug > 0) printf x; } while (0)
 #define DPRINTFN(n, x)	do { if (bwfm_debug >= (n)) printf x; } while (0)
@@ -448,7 +448,14 @@ bwfm_start(struct ifnet *ifp)
 		if (m == NULL)
 			break;
 
+		/* Beacon: trace WPA handshake frames */
+		if (m->m_len >= sizeof(struct ether_header) &&
+		    ntohs(mtod(m, struct ether_header *)->ether_type) ==
+		    ETHERTYPE_EAPOL)
+			printf("bwfm: EAPOL tx %d bytes\n", m->m_pkthdr.len);
+
 		if (sc->sc_bus_ops->bs_txdata(sc, m) != 0) {
+			printf("bwfm: txdata failed\n");
 			ifp->if_oerrors++;
 			m_freem(m);
 			continue;
@@ -2457,6 +2464,10 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m, struct mbuf_list *ml,
 		return;
 	}
 
+	if (m->m_len >= sizeof(e->ehdr) &&
+	    ntohs(e->ehdr.ether_type) == ETHERTYPE_EAPOL)
+		printf("bwfm: EAPOL rx %d bytes, rsn %d\n", m->m_pkthdr.len,
+		    (ic->ic_flags & IEEE80211_F_RSNON) != 0);
 	if ((ic->ic_flags & IEEE80211_F_RSNON) &&
 	    m->m_len >= sizeof(e->ehdr) &&
 	    ntohs(e->ehdr.ether_type) == ETHERTYPE_EAPOL) {
@@ -2693,6 +2704,12 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 		m_freem(m);
 		return;
 	}
+
+	/* Beacon: trace firmware events (not scan results) */
+	if (ntohl(e->msg.event_type) != BWFM_E_ESCAN_RESULT)
+		printf("bwfm: event %u status %u reason %u flags %#x\n",
+		    ntohl(e->msg.event_type), ntohl(e->msg.status),
+		    ntohl(e->msg.reason), ntohs(e->msg.flags));
 
 	switch (ntohl(e->msg.event_type)) {
 	case BWFM_E_ESCAN_RESULT: {
