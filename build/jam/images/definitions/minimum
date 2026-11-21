@@ -128,6 +128,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 
 SYSTEM_APPS = [ FFilterByBuildFeatures
 	AboutSystem
+	MediaPlayer@riscv64	# Beacon: audio test
 	BootManager@x86,x86_64
 	CharacterMap
 	Debugger@libedit
@@ -174,7 +175,7 @@ SYSTEM_PREFERENCES = [ FFilterByBuildFeatures
 	Input
 	Keymap
 	Locale
-	Media@riscv64		# Beacon: JH7110 audio
+	#Media@riscv64		# Beacon: needs libmidi -> libvorbis -> libogg (no riscv64 libogg yet)
 	Network
 	Notifications
 	Screen
@@ -203,6 +204,7 @@ rule HaikuImageGetSystemLibs
 			libdevice.so
 			libgnu.so
 			libmedia.so@riscv64	# Beacon: JH7110 audio
+			libgame.so@riscv64	# Beacon: needed by media_addon_server
 			libnetwork.so
 			libpackage.so
 			libtextencoding.so
@@ -294,7 +296,10 @@ SYSTEM_ADD_ONS_MEDIA = [ FFilterByBuildFeatures
 	mixer.media_addon@riscv64
 ] ;
 
-SYSTEM_ADD_ONS_MEDIA_PLUGINS =  ;
+SYSTEM_ADD_ONS_MEDIA_PLUGINS = [ FFilterByBuildFeatures
+	au_reader@riscv64	# Beacon: native .au playback (no ffmpeg yet)
+	raw_decoder@riscv64
+] ;
 
 SYSTEM_ADD_ONS_PRINT = ;
 

@@ -75,7 +75,7 @@ auReader::Sniff(int32 *streamCount)
 	}
 
 	int64 filesize = Source()->Seek(0, SEEK_END);
-	if (filesize < sizeof(struct snd_header)) {
+	if (filesize < (int64)sizeof(struct snd_header)) {	// Beacon: -Werror=sign-compare
 		TRACE("auReader::Sniff: File too small\n");
 		return B_ERROR;
 	}
