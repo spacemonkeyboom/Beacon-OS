@@ -1815,12 +1815,22 @@ bwfm_proto_bcdc_rxctl(struct bwfm_softc *sc, char *buf, size_t len)
 	TAILQ_FOREACH_SAFE(ctl, &sc->sc_bcdc_rxctlq, next, tmp) {
 		if (ctl->reqid != BWFM_BCDC_DCMD_ID_GET(dcmd->hdr.flags))
 			continue;
+		/* Beacon: like Linux brcmf_proto_bcdc_cmplt(), accept a reply
+		 * whose length differs and copy what fits. OpenBSD freed ctl
+		 * here but left it queued: the waiter timed out ("timeout
+		 * waiting for txctl response") and the entry was used after
+		 * being freed. */
 		if (ctl->len != len) {
-			free(ctl->buf, M_TEMP, ctl->len);
-			free(ctl, M_TEMP, sizeof(*ctl));
-			return;
+			static int mismatch_logs;
+			if (mismatch_logs++ < 10)
+				printf("%s: txctl reply length %zu, request %zu "
+				    "(cmd %u, status %d)\n", DEVNAME(sc), len,
+				    ctl->len, dcmd->hdr.cmd, (int)dcmd->hdr.status);
+			if (len > ctl->len)
+				len = ctl->len;
 		}
 		memcpy(ctl->buf, buf, len);
+		ctl->len = len;
 		ctl->done = 1;
 		wakeup(ctl);
 		return;
