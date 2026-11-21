@@ -296,6 +296,9 @@ AddFilesToPackage data artwork : beacon-wallpaper.bmp beacon-wallpaper-2.bmp ;
 # Beacon: test tone for the media kit (3 s, 440 Hz, 16-bit stereo .au)
 SEARCH on beacon-test-tone.au = [ FDirName $(HAIKU_TOP) data sounds beacon ] ;
 AddFilesToPackage data sounds : beacon-test-tone.au ;
+# Beacon: Kenney "Interface Sounds" (CC0), default system sounds (see MediaFilesManager)
+local kenneySounds = [ Glob $(HAIKU_TOP)/data/sounds/kenney-interface : *.au License.txt ] ;
+AddFilesToPackage data sounds kenney-interface : $(kenneySounds) ;
 
 # Mail spell check dictionaries
 local spellFiles = words geekspeak ;

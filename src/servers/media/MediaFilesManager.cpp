@@ -15,6 +15,7 @@
 #include <FindDirectory.h>
 #include <MediaFiles.h>
 #include <Path.h>
+#include <String.h>
 
 #include <MediaDebug.h>
 #include <MediaSounds.h>
@@ -464,8 +465,31 @@ MediaFilesManager::_LoadState()
 
 	BFile file;
 	status_t status = _OpenSettingsFile(file, B_READ_ONLY);
-	if (status != B_OK)
+	if (status != B_OK) {
+		// Beacon: no settings yet (first boot): default system sounds from
+		// Kenney's "Interface Sounds" (CC0), shipped in
+		// /boot/system/data/sounds/kenney-interface.
+		static const struct { const char* event; const char* file; }
+			kBeaconSounds[] = {
+			{ "Beep", "bong_001" },
+			{ "Startup", "confirmation_004" },
+			{ "Information alert", "question_001" },
+			{ "Important alert", "glass_001" },
+			{ "Error alert", "error_006" },
+			{ "Window close", "close_001" },
+		};
+		for (size_t i = 0; i < B_COUNT_OF(kBeaconSounds); i++) {
+			BString path("/boot/system/data/sounds/kenney-interface/");
+			path << kBeaconSounds[i].file << ".au";
+			entry_ref ref;
+			if (get_ref_for_path(path.String(), &ref) == B_OK) {
+				float gain = 1.0f;
+				_SetItem(BMediaFiles::B_SOUNDS, kBeaconSounds[i].event, &ref,
+					&gain);
+			}
+		}
 		return status;
+	}
 
 	BMessage settings;
 	status = settings.Unflatten(&file);
