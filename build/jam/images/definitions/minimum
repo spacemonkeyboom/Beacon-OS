@@ -33,6 +33,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	ftpd
 	audio_output@riscv64	# Beacon: switch audio output (JH7110 jack / HDMI)
 	hmulti_tone@riscv64	# Beacon: hmulti test tone (JH7110 audio)
+	screenshot
 	getarch
 	groupadd
 	groupdel
@@ -130,6 +131,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 SYSTEM_APPS = [ FFilterByBuildFeatures
 	AboutSystem
 	MediaPlayer@riscv64	# Beacon: audio test
+	Screenshot
 	BootManager@x86,x86_64
 	CharacterMap
 	Debugger@libedit

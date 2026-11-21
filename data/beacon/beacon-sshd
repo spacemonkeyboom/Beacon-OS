@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Beacon: start sshd from net_server's services. Waits for the host keys that
+# OpenSSH's post-install script makes on the first boot, and gives sshd a
+# PID file path that exists. Does nothing if OpenSSH is not installed.
+sshd=/boot/system/bin/sshd
+[ -x "$sshd" ] || exit 0
+keys=/boot/system/settings/ssh
+i=0
+while [ ! -f "$keys/ssh_host_ed25519_key" ] && [ $i -lt 300 ]; do
+	sleep 2
+	i=$((i + 1))
+done
+mkdir -p /boot/system/var/run
+exec "$sshd" -D -o PidFile=/boot/system/var/run/sshd.pid
