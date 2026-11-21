@@ -187,6 +187,7 @@ rule DefineDefaultBuildProfiles
 			AddHaikuImageSystemPackages
 				openssl3
 				wpa_supplicant	# Beacon: WPA/WPA2 Wi-Fi (password dialog)
+				libpng16	# Beacon: PNG translator (screenshots)
 				;
 		}
 

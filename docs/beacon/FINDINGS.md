@@ -25,6 +25,14 @@ confirmed.
   `src/system/kernel/arch/riscv64/arch_int.cpp`, `beacon_spurious_page_fault()`.
   It logs the first 8 cases; we see a few per boot.
 
+### X512's riscv64 fixes (from X547/haiku `riscv-milkv-titan`) — pending
+Cherry-picked with authorship kept: same-team check on context switch,
+SBI timer clear, i-cache coherency, misaligned-access fixes (kernel and
+app_server), software update of PTE access flags, PTE update race barrier.
+Left out for now: EFI loader memory-map changes (our loader boots fine),
+PCI/xHCI MSI rework, UR-DP1000-only changes, the PLIC IRQ limit (we reserve
+1024 vectors).
+
 ## USB
 
 ### VIA VL805 xHCI (on PCIe) — confirmed
