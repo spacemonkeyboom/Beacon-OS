@@ -1,15 +1,19 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Beacon: start sshd from net_server's services. Waits for the host keys that
-# OpenSSH's post-install script makes on the first boot, and gives sshd a
+# Beacon: start sshd from net_server's services. Waits up to a minute for the
+# host keys OpenSSH's post-install script makes, creates them if they are still
+# missing, and gives sshd a
 # PID file path that exists. Does nothing if OpenSSH is not installed.
 sshd=/boot/system/bin/sshd
 [ -x "$sshd" ] || exit 0
 keys=/boot/system/settings/ssh
 i=0
-while [ ! -f "$keys/ssh_host_ed25519_key" ] && [ $i -lt 300 ]; do
+while [ ! -f "$keys/ssh_host_ed25519_key" ] && [ $i -lt 30 ]; do
 	sleep 2
 	i=$((i + 1))
 done
+# OpenSSH's first-boot key script does not always run (seen on rv53);
+# make any missing host keys ourselves rather than wait forever.
+[ -f "$keys/ssh_host_ed25519_key" ] || /boot/system/bin/ssh-keygen -A
 mkdir -p /boot/system/var/run
 exec "$sshd" -D -o PidFile=/boot/system/var/run/sshd.pid

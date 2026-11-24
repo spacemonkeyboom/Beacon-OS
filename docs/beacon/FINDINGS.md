@@ -73,6 +73,22 @@ networks cannot be joined. The `minimum` profile does not include it
   Credit: the idea comes from air/OS's `broadcomfmac` (MIT).
   `dev/sdmmc/if_bwfm_sdio.c`, `bwfm_sdio_poller()`.
 
+### SDIO host interrupt disabled by the kernel under load — confirmed
+* **Seen:** during a large transfer the link stays "up" but traffic nearly
+  stops (pings 260-940 ms, SSH stalls); serial shows
+  `Disabling unhandled io interrupt 74` (74 = sdio0, the Wi-Fi). Only the
+  bus thread's 10 ms poll keeps the driver alive.
+* **Why:** Haiku disables a non-shared vector when >99% of 10000
+  interrupts go unclaimed. Our dw_mmc handler masked events in INTMASK and
+  left RINTSTS for the waiting thread. On the JH7110 the line stayed up
+  while a masked raw bit was set (logged: `RINTSTS 0x8` data-over, not in
+  `INTMASK 0x1be84`, interrupts back to back), so it fired unclaimed.
+* **Fix:** as Linux `dw_mci_interrupt()`: the handler copies the event
+  bits into a software status and clears them in hardware; the driver
+  reads `RINTSTS | copy` and acks both. 64 MB copied with no loss after.
+  `src/add-ons/kernel/busses/mmc/dw_mmc/DwMmc.cpp` (`_Status()`, `_Ack()`).
+  Unclaimed interrupts are now logged with the controller state.
+
 ### OpenBSD `bwfm_proto_bcdc_rxctl()` use-after-free — found by reading
 On a reply whose length differs from the request, OpenBSD frees the pending
 request but leaves it on `sc_bcdc_rxctlq`; the waiter times out and the
@@ -113,6 +129,29 @@ the peer underneath it. We set `roam_off 1` (as air/OS does).
   maintenance, `SendData` unimplemented, RX uses the TX ring).
 * **File:** `src/add-ons/kernel/drivers/network/ether/dwmac/` (README.md has
   the expected serial lines and test steps).
+
+## Images, packages and services
+
+### OpenSSH needs a `sshd` user; first-boot keys may not appear — confirmed
+* The nightly/release profiles create the `party` group naming `sshd` but
+  never the user, so sshd exits with "Privilege separation user sshd does
+  not exist". Add it with `AddUserToHaikuImage` (`build/jam/DefaultBuildProfiles`).
+* OpenSSH's post-install key script did not run on one first boot; our
+  start script (`data/beacon/beacon-sshd`) now runs `ssh-keygen -A` itself.
+
+### gcc in the nightly image was never installed — confirmed
+The nightly image only copies gcc to the Installer's optional folder
+(`_packages_`). To build on the board, add `binutils gcc make` and
+`gmp mpfr mpc` (the image builder requires dependencies listed) as system
+packages, and put `haiku_devel` in `system packages` instead of
+`_packages_` (`build/jam/OptionalPackages`; adding it twice fails with
+"would need to uninstall package haiku_devel"). `haiku_devel` names
+`haiku` as its base package, so it only activates in the system folder.
+
+### mmc_disk serial trace slows large writes — confirmed
+Upstream builds `mmc_disk` with `TRACE_MMC_DISK` on: two synchronous
+115200-baud lines per block request. Turned off; the empty `TRACE` must
+be a statement (`do { } while (0)`) or an `if/else` breaks.
 
 ## Media kit
 

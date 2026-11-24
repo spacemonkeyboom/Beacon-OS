@@ -162,7 +162,7 @@ rule DefineDefaultBuildProfiles
 			}
 			# Beacon: a full image can build software on the board itself
 			AddHaikuImageSystemPackages binutils gcc make gmp mpfr mpc ;
-			AddHaikuImagePackages haiku_devel ;
+			# (haiku_devel is activated in images/HaikuImage)
 
 			AddHaikuImageSystemPackages
 				mandoc

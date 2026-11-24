@@ -120,7 +120,13 @@ if [ IsOptionalHaikuImagePackageAdded DevelopmentBase ] {
 
 # DevelopmentMin
 if [ IsOptionalHaikuImagePackageAdded DevelopmentMin ] {
-	AddPackageFilesToHaikuImage _packages_
+	# Beacon: full riscv64 images compile on the board, so activate the
+	# headers instead of leaving them for the Installer.
+	local develDir = _packages_ ;
+	if $(HAIKU_NIGHTLY_BUILD) = 1 && $(TARGET_ARCH) = riscv64 {
+		develDir = system packages ;
+	}
+	AddPackageFilesToHaikuImage $(develDir)
 		:
 		haiku_devel.hpkg
 		haiku_$(TARGET_PACKAGING_ARCHS[2-])_devel.hpkg

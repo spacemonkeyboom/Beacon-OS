@@ -16,7 +16,13 @@ Development is AI-assisted.
 
 ## Screenshots
 
-Beacon 0.2 running on an Orange Pi RV (8 GB), captured on the board itself:
+Beacon 0.3 running on an Orange Pi RV (8 GB), captured on the board itself:
+
+<p align="center">
+  <img src="docs/beacon/screenshots/beacon-0.3-desktop.jpg" alt="Beacon 0.3 desktop: About Beacon, Terminal showing gcc 13.2 and the app list, ActivityMonitor and DeskCalc" width="860">
+</p>
+
+Beacon 0.2:
 
 <p align="center">
   <img src="docs/beacon/screenshots/desktop-about.jpg" alt="Beacon desktop with About Beacon, Screen preferences and Tracker showing System Disk" width="860">
@@ -36,8 +42,8 @@ Beacon 0.2 running on an Orange Pi RV (8 GB), captured on the board itself:
 | microSD card | Works (new `dw_mmc` driver, PIO) |
 | Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
 | Wired Ethernet | In the image from 0.3 (new; please report results) |
-| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP (25 MHz SDIO for now) |
-| Full desktop: 37 apps, 22 preference panels, gcc/make/git on the board | Works (0.3) |
+| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP; stable under load from 0.3 (25 MHz SDIO, ~170 KB/s for now) |
+| Full desktop: 37 apps, 22 preference panels; gcc 13, make, git and the Haiku headers on the board | Works (0.3) |
 | Bluetooth | Planned |
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
