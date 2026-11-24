@@ -35,12 +35,13 @@ Beacon 0.2 running on an Orange Pi RV (8 GB), captured on the board itself:
 | USB 3 ports (VIA VL805 over PCIe): keyboard, mouse, hot-plug | Works (VL805 fixes in the xHCI driver) |
 | microSD card | Works (new `dw_mmc` driver, PIO) |
 | Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
-| Wired Ethernet | Driver written, **not in the image yet** (being fixed) |
-| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP (2.4 and 5 GHz chip; 25 MHz SDIO for now) |
+| Wired Ethernet | In the image from 0.3 (new; please report results) |
+| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP (25 MHz SDIO for now) |
+| Full desktop: 37 apps, 22 preference panels, gcc/make/git on the board | Works (0.3) |
 | Bluetooth | Planned |
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
-| Web browser | Planned (WebPositive first, Falkon later) |
+| Web browser | In progress (WebPositive first, Falkon later) |
 
 **For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
 lists the bugs and hardware quirks we found (RISC-V TLB faults, VL805 USB,
@@ -59,7 +60,24 @@ Known issues:
 1. Download the latest image from
    [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases)
    and check its SHA-256.
-2. Write it to a microSD card (any size from 1 GB). On Linux:
+2. Write it to a microSD card (2 GB or larger; **this erases the card**).
+
+   **Windows** (easiest: no unpacking needed):
+   * [Raspberry Pi Imager](https://www.raspberrypi.com/software/): *Choose
+     Device* → "No filtering", *Choose OS* → **Use custom** → pick the
+     `beacon-*.mmc.image.xz` file, *Choose Storage* → your microSD card →
+     *Next* → "No" to OS customisation → *Yes* to write.
+   * or [balenaEtcher](https://etcher.balena.io/): *Flash from file* → the
+     `.xz` file → *Select target* → your card → *Flash!*
+   * To check the download first, in PowerShell:
+     `Get-FileHash .\beacon-0.3-orangepi-rv.mmc.image.xz` and compare it with the
+     `.sha256` file.
+   * Windows may offer to "format" the card afterwards: click **Cancel**. Windows
+     cannot read Beacon's file system; that is normal.
+
+   **macOS**: Raspberry Pi Imager or balenaEtcher, as above.
+
+   **Linux**:
 
    ```
    xz -d beacon-*.mmc.image.xz
@@ -89,7 +107,7 @@ For the Orange Pi RV image:
 ```
 mkdir generated.riscv64 && cd generated.riscv64
 ../configure --cross-tools-source ../../buildtools --build-cross-tools riscv64 -j4
-jam -q -j4 @minimum-mmc
+jam -q -j4 @nightly-mmc     # full image (0.3); @minimum-mmc for a small one
 ```
 
 ## Licences
