@@ -328,6 +328,8 @@ private:
 			status_t			_UpdateClockRegisters();
 			status_t			_SetClockHz(uint32 hz);
 			void				_EnableInterrupts(uint32 mask);
+			uint32				_Status();
+			void				_Ack(uint32 bits);
 			status_t			_WaitForStatus(uint32 mask, bigtime_t deadline,
 									uint32& status);
 			status_t			_WaitWhileBusy(bigtime_t timeout);
@@ -379,6 +381,8 @@ private:
 			bool				fSdioIrqEnabled;
 			int32				fSdioIrqCount;
 			int32				fUnhandledCount;
+			uint32				fSoftStatus;
+				// Beacon: RINTSTS event bits taken by the interrupt handler
 				// Beacon: interrupts with nothing pending (see _HandleInterrupt)
 			bool				fNoLowPower;
 			bool				fResetDone;

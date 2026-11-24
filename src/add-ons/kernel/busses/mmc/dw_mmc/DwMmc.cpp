@@ -143,6 +143,7 @@ DwMmcHost::DwMmcHost()
 	fSdioIrqEnabled(false),
 	fSdioIrqCount(0),
 	fUnhandledCount(0),
+	fSoftStatus(0),
 	fNoLowPower(false),
 	fResetDone(false),
 	fGpio(NULL),
@@ -319,7 +320,7 @@ DwMmcHost::Init(const DwMmcConfig& config)
 	// PIO only for now: keep the IDMAC in reset and disabled.
 	_Write(kDwBmod, kDwBmodSwReset);
 
-	_Write(kDwRintsts, 0xffffffff);
+	_Ack(0xffffffff);
 	_Write(kDwTmout, 0xffffffff);
 
 	// FIFO thresholds, Linux dw_mci_probe(): RX mark = depth/2 - 1,
@@ -377,7 +378,7 @@ DwMmcHost::Init(const DwMmcConfig& config)
 		fPollMode = true;
 	}
 
-	_Write(kDwRintsts, 0xffffffff);
+	_Ack(0xffffffff);
 	_Write(kDwIntmask, fConfig.cdUsable ? (uint32)kDwIntCd : 0);
 	_Write(kDwCtrl, _Read(kDwCtrl) | kDwCtrlIntEnable);
 
@@ -436,9 +437,9 @@ DwMmcHost::_UpdateClockRegisters()
 		spin(1);
 	}
 
-	uint32 rintsts = _Read(kDwRintsts);
+	uint32 rintsts = _Status();
 	if ((rintsts & kDwIntHle) != 0) {
-		_Write(kDwRintsts, kDwIntHle);
+		_Ack(kDwIntHle);
 		ERROR("%s: hardware locked error on clock update\n", fConfig.name);
 		return B_ERROR;
 	}
@@ -511,13 +512,30 @@ DwMmcHost::_EnableInterrupts(uint32 mask)
 }
 
 
+uint32
+DwMmcHost::_Status()
+{
+	// Hardware status plus what the interrupt handler already took and
+	// cleared (see _HandleInterrupt).
+	return _Read(kDwRintsts) | (uint32)atomic_get((int32*)&fSoftStatus);
+}
+
+
+void
+DwMmcHost::_Ack(uint32 bits)
+{
+	atomic_and((int32*)&fSoftStatus, ~(int32)bits);
+	_Write(kDwRintsts, bits);
+}
+
+
 status_t
 DwMmcHost::_WaitForStatus(uint32 mask, bigtime_t deadline, uint32& status)
 {
 	// The interrupt is only a doorbell: RINTSTS is the truth.
 	bigtime_t spinUntil = system_time() + kSpinBeforeSleep;
 	for (;;) {
-		status = _Read(kDwRintsts);
+		status = _Status();
 		if ((status & mask) != 0)
 			return B_OK;
 
@@ -536,14 +554,14 @@ DwMmcHost::_WaitForStatus(uint32 mask, bigtime_t deadline, uint32& status)
 		fInterruptCondition.Add(&entry);
 		_EnableInterrupts(mask);
 
-		status = _Read(kDwRintsts);
+		status = _Status();
 		if ((status & mask) != 0)
 			return B_OK;
 
 		bigtime_t timeout = std::min(deadline - now, kInterruptFallbackPoll);
 		status_t result = entry.Wait(B_RELATIVE_TIMEOUT, timeout);
 		if (result == B_TIMED_OUT) {
-			status = _Read(kDwRintsts);
+			status = _Status();
 			if ((status & mask) != 0) {
 				// The event is there but no interrupt woke us.
 				int32 missed = atomic_add(&fMissedInterrupts, 1) + 1;
@@ -598,9 +616,25 @@ DwMmcHost::_HandleInterrupt()
 	if (idsts != 0)
 		_Write(fIdstsReg, idsts);
 
+	// Beacon: like Linux dw_mci_interrupt(), take the event bits into a
+	// software copy and clear them in hardware here. On the JH7110 the line
+	// stays up while a (masked) raw status bit is set (seen: RINTSTS 0x8 =
+	// data-over with INTMASK not including it, interrupts back to back),
+	// and the kernel disables a line that keeps firing unclaimed.
+	uint32 raw = _Read(kDwRintsts) & kDwIntAllButCdSdio;
+	if (raw != 0) {
+		atomic_or((int32*)&fSoftStatus, (int32)raw);
+		_Write(kDwRintsts, raw);
+	}
+
 	if (pending == 0) {
-		if (idsts != 0)
+		if (idsts != 0 || raw != 0) {
+			if (raw != 0) {
+				atomic_add(&fInterruptCount, 1);
+				fInterruptCondition.NotifyAll();
+			}
 			return B_HANDLED_INTERRUPT;
+		}
 		// Beacon: the kernel disables a line when >99% of 10000 interrupts
 		// are unclaimed ("Disabling unhandled io interrupt 74" took the
 		// Wi-Fi SDIO host down under load). Record the state that fired.
@@ -771,7 +805,7 @@ DwMmcHost::_ExecuteCommandLocked(uint8_t command, uint32_t argument,
 		spin(1);
 	}
 
-	_Write(kDwRintsts, kDwIntAllButCdSdio);
+	_Ack(kDwIntAllButCdSdio);
 	_Write(kDwCmdarg, argument);
 	_Write(kDwCmd, cmdr);
 
@@ -779,7 +813,7 @@ DwMmcHost::_ExecuteCommandLocked(uint8_t command, uint32_t argument,
 	status_t result = _WaitForStatus(kDwIntCmdDone | kDwIntHle,
 		system_time() + 1000000, status);
 	// RTO/RCRC/RE are raised together with CMD_DONE.
-	_Write(kDwRintsts, status & (kDwIntCmdDone | kDwIntCmdError));
+	_Ack(status & (kDwIntCmdDone | kDwIntCmdError));
 
 	if (result == B_OK) {
 		if ((status & kDwIntHle) != 0)
@@ -859,7 +893,7 @@ DwMmcHost::_RecoverFromDataError()
 	// clear interrupts, then reload the clock registers into the CIU.
 	if (!_ResetController(kDwCtrlReset | kDwCtrlFifoReset))
 		ERROR("%s: recovery reset failed\n", fConfig.name);
-	_Write(kDwRintsts, kDwIntAllButCdSdio);
+	_Ack(kDwIntAllButCdSdio);
 	_UpdateClockRegisters();
 }
 
@@ -1009,7 +1043,7 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 			continue;
 		}
 
-		uint32 rintsts = _Read(kDwRintsts);
+		uint32 rintsts = _Status();
 		if ((rintsts & kDwIntDataError) != 0) {
 			ERROR("%s: data error, RINTSTS %#" B_PRIx32 ", %" B_PRIuSIZE
 				" of %" B_PRIuSIZE " bytes left\n", fConfig.name, rintsts,
@@ -1028,7 +1062,7 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 
 		// Clear the ready flag before looking again, so a FIFO threshold
 		// crossing from now on is not lost.
-		_Write(kDwRintsts, ready);
+		_Ack(ready);
 		fifoCount = dw_status_fifo_count(_Read(kDwStatus));
 		if (data.isWrite ? fifoCount < fFifoDepth : fifoCount > 0)
 			continue;
@@ -1058,7 +1092,7 @@ DwMmcHost::_TransferPio(const DataPhase& data, bigtime_t deadline)
 		return data_error_to_status(rintsts);
 	}
 
-	_Write(kDwRintsts, kDwIntDataOver | kDwIntRxdr | kDwIntTxdr);
+	_Ack(kDwIntDataOver | kDwIntRxdr | kDwIntTxdr);
 	return B_OK;
 }
 
