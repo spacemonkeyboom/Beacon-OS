@@ -81,6 +81,9 @@ rule DefineDefaultBuildProfiles
 			HAIKU_ROOT_USER_NAME ?= user ;
 			HAIKU_ROOT_USER_REAL_NAME ?= "Yourself" ;
 			AddGroupToHaikuImage party : 101 : user sshd ;
+			# Beacon: OpenSSH needs its privilege-separation user
+			AddUserToHaikuImage sshd : 1 : 101 : /var/empty : /bin/true
+				: "SSH privilege separation" ;
 			HAIKU_IMAGE_HOST_NAME ?= shredder ;
 
 			if $(HAIKU_INCLUDE_SOURCES) = 1 || $(DEBUG) != 0 {
@@ -137,7 +140,11 @@ rule DefineDefaultBuildProfiles
 			HAIKU_ROOT_USER_NAME ?= user ;
 			HAIKU_ROOT_USER_REAL_NAME ?= "Yourself" ;
 			AddGroupToHaikuImage party : 101 : user sshd ;
+			# Beacon: OpenSSH needs its privilege-separation user
+			AddUserToHaikuImage sshd : 1 : 101 : /var/empty : /bin/true
+				: "SSH privilege separation" ;
 			HAIKU_IMAGE_HOST_NAME ?= shredder ;
+			HAIKU_IMAGE_SIZE ?= 1100 ;	# Beacon: room for gcc + headers
 			if $(DEBUG) != 0 {
 				HAIKU_IMAGE_SIZE ?= 850 ;
 			}
@@ -153,6 +160,9 @@ rule DefineDefaultBuildProfiles
 					= [ FDirName $(HAIKU_TOP) data beacon packages ] ;
 				AddFilesToHaikuImage system packages : $(beaconPkgs) ;
 			}
+			# Beacon: a full image can build software on the board itself
+			AddHaikuImageSystemPackages binutils gcc make gmp mpfr mpc ;
+			AddHaikuImagePackages haiku_devel ;
 
 			AddHaikuImageSystemPackages
 				mandoc
