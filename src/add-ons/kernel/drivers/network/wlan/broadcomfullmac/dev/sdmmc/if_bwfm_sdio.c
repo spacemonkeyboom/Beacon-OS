@@ -124,6 +124,11 @@ struct bwfm_sdio_softc {
 	thread_id		  sc_poller;
 	volatile int		  sc_poll_on;
 	uint32_t		  sc_stall_logs;
+	/* Beacon: counters for the once-a-minute status line */
+	uint32_t		  sc_stall_total;
+	uint32_t		  sc_rx_hdrs;
+	uint32_t		  sc_tx_frames;
+	bigtime_t		  sc_last_rx;
 	struct mbuf_list	  sc_tx_queue;
 	int			  sc_tx_count;
 
@@ -748,6 +753,7 @@ static status_t
 bwfm_sdio_poller(void *arg)
 {
 	struct bwfm_sdio_softc *sc = arg;
+	bigtime_t next_stats = system_time() + 60000000;
 
 	while (sc->sc_poll_on) {
 		acquire_sem_etc(sc->sc_poll_sem, 1, B_RELATIVE_TIMEOUT, 10000);
@@ -756,6 +762,16 @@ bwfm_sdio_poller(void *arg)
 		mtx_lock(&Giant);
 		bwfm_sdio_task(sc);
 		mtx_unlock(&Giant);
+		/* Beacon: a silent stall (link up, nothing moving) must show up */
+		if (system_time() >= next_stats) {
+			next_stats += 60000000;
+			printf("%s: stats: tx seq %u max %u, %d queued, %u sent, "
+			    "%u stalls; rx %u headers, last %lld ms ago\n",
+			    DEVNAME(sc), sc->sc_tx_seq, sc->sc_tx_max_seq,
+			    sc->sc_tx_count, sc->sc_tx_frames, sc->sc_stall_total,
+			    sc->sc_rx_hdrs, sc->sc_last_rx == 0 ? -1LL
+			    : (long long)((system_time() - sc->sc_last_rx) / 1000));
+		}
 	}
 	return B_OK;
 }
@@ -1191,6 +1207,7 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
 	int i;
 
 	if (!bwfm_sdio_tx_ok(sc)) {
+		sc->sc_stall_total++;
 		if (sc->sc_stall_logs < 20) {
 			sc->sc_stall_logs++;
 			printf("%s: tx stalled: no credit (seq %u max %u, %d queued)\n",
@@ -1206,6 +1223,7 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
 		if (m == NULL)
 			break;
 
+		sc->sc_tx_frames++;
 		if (m->m_type == MT_CONTROL)
 			bwfm_sdio_tx_ctrlframe(sc, m);
 		else
@@ -1357,6 +1375,8 @@ bwfm_sdio_rx_frames(struct bwfm_sdio_softc *sc)
 			break;
 		}
 
+		sc->sc_rx_hdrs++;
+		sc->sc_last_rx = system_time();
 		/* Beacon: Linux brcmf_sdio_update_txseq(): reject a bogus window */
 		if ((uint8_t)(swhdr->maxseqnr - sc->sc_tx_seq) > 0x40) {
 			printf("%s: bad max tx seq %u (seq %u), using seq+2\n",

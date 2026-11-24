@@ -378,6 +378,8 @@ private:
 			sem_id				fSdioIrqSemaphore;
 			bool				fSdioIrqEnabled;
 			int32				fSdioIrqCount;
+			int32				fUnhandledCount;
+				// Beacon: interrupts with nothing pending (see _HandleInterrupt)
 			bool				fNoLowPower;
 			bool				fResetDone;
 			Jh7110SysGpio*		fGpio;

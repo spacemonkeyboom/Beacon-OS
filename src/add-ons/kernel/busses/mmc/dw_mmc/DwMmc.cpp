@@ -142,6 +142,7 @@ DwMmcHost::DwMmcHost()
 	fSdioIrqSemaphore(-1),
 	fSdioIrqEnabled(false),
 	fSdioIrqCount(0),
+	fUnhandledCount(0),
 	fNoLowPower(false),
 	fResetDone(false),
 	fGpio(NULL),
@@ -597,8 +598,24 @@ DwMmcHost::_HandleInterrupt()
 	if (idsts != 0)
 		_Write(fIdstsReg, idsts);
 
-	if (pending == 0)
-		return idsts != 0 ? B_HANDLED_INTERRUPT : B_UNHANDLED_INTERRUPT;
+	if (pending == 0) {
+		if (idsts != 0)
+			return B_HANDLED_INTERRUPT;
+		// Beacon: the kernel disables a line when >99% of 10000 interrupts
+		// are unclaimed ("Disabling unhandled io interrupt 74" took the
+		// Wi-Fi SDIO host down under load). Record the state that fired.
+		int32 n = atomic_add(&fUnhandledCount, 1) + 1;
+		if (n <= 8 || n % 2000 == 0) {
+			dprintf("dw_mmc: %s: interrupt with nothing pending #%" B_PRId32
+				": CTRL %#" B_PRIx32 " INTMASK %#" B_PRIx32 " RINTSTS %#"
+				B_PRIx32 " STATUS %#" B_PRIx32 " IDSTS %#" B_PRIx32
+				" (handled %" B_PRId32 ", sdio %" B_PRId32 ")\n",
+				fConfig.name, n, _Read(kDwCtrl), _Read(kDwIntmask),
+				_Read(kDwRintsts), _Read(kDwStatus), _Read(fIdstsReg),
+				atomic_get(&fInterruptCount), atomic_get(&fSdioIrqCount));
+		}
+		return B_UNHANDLED_INTERRUPT;
+	}
 
 	// Beacon: SDIO card interrupt (Linux dw_mci_interrupt): ack, mask until
 	// the bus manager's handlers have run, wake the bus manager's thread.
@@ -626,6 +643,10 @@ DwMmcHost::_HandleInterrupt()
 		if (fScanSemaphore >= 0 && (_Read(kDwCdetect) & 1) == 0)
 			release_sem_etc(fScanSemaphore, 1, B_DO_NOT_RESCHEDULE);
 	}
+
+	// Beacon: read back so the INTMASK write reaches the controller (and
+	// its interrupt line drops) before the PLIC is told we are done.
+	_Read(kDwIntmask);
 
 	atomic_add(&fInterruptCount, 1);
 	fInterruptCondition.NotifyAll();
