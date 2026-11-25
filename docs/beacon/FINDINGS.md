@@ -255,3 +255,9 @@ the PMIC, so the board hangs until power-cycled.
 (`libxml2.so.16`), so anything using fontconfig fails to load ("Missing
 library") and `pkgman install fontconfig` can hang. Beacon rebuilds fontconfig
 with expat, its default XML parser.
+
+## Qt 5.15.19 on Haiku riscv64
+
+*Confirmed (Orange Pi RV, 2026-11-25).* A Qt Widgets window and a
+QNetworkAccessManager HTTPS request work. Cross-build notes, patch and
+configure scripts: [QT5.md](QT5.md).

@@ -1,0 +1,44 @@
+name			qt5_base
+version			5.15.19-1
+architecture	riscv64
+summary			"Qt 5 base libraries and the Haiku platform plugin (riscv64 build by Beacon)"
+description		"Qt 5.15.19 qtbase (Core, Gui, Widgets, Network with OpenSSL 3, Sql with SQLite, Xml, Concurrent, PrintSupport, Test) with the HaikuPorts patches, cross-built for riscv64 by the Beacon project, plus the Haiku platform plugin, Haiku style and HVIF image plugin from qthaikuplugins. OpenGL and D-Bus are off (no Mesa on riscv64 yet)."
+packager		"Beacon <https://github.com/spacemonkeyboom/Beacon-OS>"
+vendor			"Beacon"
+copyrights		{ "2015-2020 The Qt Company Ltd." "2017-2025 Gerasim Troeglazov" }
+licenses		{ "GNU LGPL v3" "GNU GPL v2" }
+urls			{ "https://www.qt.io/" "https://github.com/threedeyes/qthaikuplugins" "https://github.com/spacemonkeyboom/Beacon-OS" }
+provides {
+	qt5_base = 5.15.19 compat >= 5
+	lib:libQt5Concurrent = 5.15.19 compat >= 5
+	lib:libQt5Core = 5.15.19 compat >= 5
+	lib:libQt5Gui = 5.15.19 compat >= 5
+	lib:libQt5Network = 5.15.19 compat >= 5
+	lib:libQt5PrintSupport = 5.15.19 compat >= 5
+	lib:libQt5Sql = 5.15.19 compat >= 5
+	lib:libQt5Test = 5.15.19 compat >= 5
+	lib:libQt5Widgets = 5.15.19 compat >= 5
+	lib:libQt5Xml = 5.15.19 compat >= 5
+}
+requires {
+	haiku >= r1~beta6_hrev60441
+	lib:libcrypto >= 3
+	lib:libexecinfo >= 1
+	lib:libfontconfig >= 1
+	lib:libfreetype >= 6
+	lib:libgcc_s >= 1
+	lib:libicudata >= 74
+	lib:libicui18n >= 74
+	lib:libicuuc >= 74
+	lib:libjpeg >= 62
+	lib:libpng16 >= 16
+	lib:libsqlite3 >= 3
+	lib:libssl >= 3
+	lib:libstdc++ >= 6
+	lib:libz >= 1.2
+	lib:libzstd >= 1
+}
+conflicts {
+	qt5
+	qthaikuplugins
+}

@@ -1,0 +1,33 @@
+name			fontconfig
+version			2.18.2-100
+architecture	riscv64
+summary			"A library for font customization and configuration (riscv64 build by Beacon, expat)"
+description		"Fontconfig 2.18.2 with the HaikuPorts patches, cross-built for riscv64 by the Beacon project with expat as the XML parser, because the riscv64 repository's fontconfig 2.18.2-2 links libxml2.so.2, which the repository no longer has. Same files and provides as the HaikuPorts package."
+packager		"Beacon <https://github.com/spacemonkeyboom/Beacon-OS>"
+vendor			"Beacon"
+copyrights		{ "2000-2007 Keith Packard" "2005 Patrick Lam" "2007 Dwayne Bailey and Translate.org.za" "2009 Roozbeh Pournader" "2008-2020 Red Hat, Inc." "2008 Danilo Segan" "2012 Google, Inc." }
+licenses		{ "MIT" }
+urls			{ "https://www.freedesktop.org/wiki/Software/fontconfig" "https://github.com/spacemonkeyboom/Beacon-OS" }
+source-urls		{ "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/2.18.2/fontconfig-2.18.2.tar.xz" }
+provides {
+	fontconfig = 2.18.2 compat >= 2
+	cmd:fc_cache
+	cmd:fc_cat
+	cmd:fc_conflist
+	cmd:fc_list
+	cmd:fc_match
+	cmd:fc_pattern
+	cmd:fc_query
+	cmd:fc_scan
+	cmd:fc_validate
+	lib:libfontconfig = 1.16.1 compat >= 1
+}
+requires {
+	haiku >= r1~beta6_hrev60441
+	lib:libexpat >= 1
+	lib:libfreetype >= 6
+}
+global-writable-files {
+	"settings/fonts/conf.d" directory keep-old
+	"settings/fonts/fonts.conf" auto-merge
+}
