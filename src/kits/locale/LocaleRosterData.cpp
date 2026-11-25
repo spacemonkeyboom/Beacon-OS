@@ -121,6 +121,8 @@ static const char* kPriorityAttr = "ADDON:priority";
 
 static const char* kLanguageField = "language";
 static const char* kTimezoneField = "timezone";
+// Beacon: default time zone until the user picks one (Haiku: GMT).
+static const char* kBeaconDefaultTimeZone = "America/New_York";
 static const char* kTranslateFilesystemField = "filesys";
 
 
@@ -502,14 +504,14 @@ LocaleRosterData::_LoadTimeSettings()
 		if (settings.FindString(kTimezoneField, &timeZoneID) == B_OK)
 			_SetDefaultTimeZone(BTimeZone(timeZoneID.String()));
 		else
-			_SetDefaultTimeZone(BTimeZone(BTimeZone::kNameOfGmtZone));
+			_SetDefaultTimeZone(BTimeZone(kBeaconDefaultTimeZone));
 
 		return B_OK;
 	}
 
 	// Something went wrong (no settings file or invalid BMessage), so we
 	// set everything to default values
-	_SetDefaultTimeZone(BTimeZone(BTimeZone::kNameOfGmtZone));
+	_SetDefaultTimeZone(BTimeZone(kBeaconDefaultTimeZone));
 
 	return status;
 }

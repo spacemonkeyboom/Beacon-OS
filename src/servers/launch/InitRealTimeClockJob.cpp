@@ -71,25 +71,18 @@ InitRealTimeClockJob::_SetRealTimeClockIsGMT(BPath path) const
 void
 InitRealTimeClockJob::_SetTimeZoneOffset(BPath path) const
 {
+	// Beacon: without a saved choice, use America/New_York (Haiku: GMT).
+	BString timeZoneID("America/New_York");
+
 	path.Append("Time settings");
 	BFile file;
-	status_t status = file.SetTo(path.Path(), B_READ_ONLY);
-	if (status != B_OK) {
-		fprintf(stderr, "Can't open Time settings file\n");
-		return;
-	}
-
 	BMessage settings;
-	status = settings.Unflatten(&file);
-	if (status != B_OK) {
-		fprintf(stderr, "Unable to parse Time settings file\n");
-		return;
-	}
-	BString timeZoneID;
-	if (settings.FindString("timezone", &timeZoneID) != B_OK) {
-		fprintf(stderr, "No timezone found\n");
-		return;
-	}
+	if (file.SetTo(path.Path(), B_READ_ONLY) != B_OK)
+		fprintf(stderr, "Can't open Time settings file, using default\n");
+	else if (settings.Unflatten(&file) != B_OK)
+		fprintf(stderr, "Unable to parse Time settings file, using default\n");
+	else if (settings.FindString("timezone", &timeZoneID) != B_OK)
+		fprintf(stderr, "No timezone found, using default\n");
 	int32 timeZoneOffset = BTimeZone(timeZoneID.String()).OffsetFromGMT();
 
 	_kern_set_timezone(timeZoneOffset, timeZoneID.String(),

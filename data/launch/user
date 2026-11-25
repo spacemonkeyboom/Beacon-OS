@@ -41,8 +41,9 @@ target desktop {
 	}
 
 	job update-time {
-		launch /system/preferences/Time --update
-		if setting ~/config/settings/networktime\ settings "synchronize at boot"
+		# Beacon: on by default; Time --boot-update honours the user's
+		# "synchronize at boot" choice once the settings file exists.
+		launch /system/preferences/Time --boot-update
 		on network_available
 	}
 

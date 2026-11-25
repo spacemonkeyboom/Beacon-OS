@@ -192,3 +192,19 @@ cross-compiling; GL/EGL must be optional without Mesa. Haiku's riscv64
 build-packages snapshot is too old for WebKit's dependencies; the image
 builder needs a locally generated HaikuPorts index (`RepositoryRules`) and
 rejects packages whose vendor is not "Haiku Project" in that index.
+
+## Clock wrong after every boot (no battery-backed RTC)
+
+*Confirmed (Orange Pi RV, 2026-11-25).* Boards without a battery-backed clock
+start at a wrong date, and HTTPS then fails ("SSL peer certificate ... not
+OK"). Haiku's boot-time NTP job (`data/launch/user`, `update-time`) only runs
+if `~/config/settings/networktime settings` exists with "synchronize at boot",
+and a fresh install has no such file, so it never ran. The default time zone
+was GMT.
+
+Fix: the job now always runs `Time --boot-update`, which skips only if the user
+has turned "synchronize at boot" off, and retries for about two minutes while
+Wi-Fi and DNS come up (`src/preferences/time/Time.cpp`). The default time zone
+is America/New_York when none is saved (`src/kits/locale/LocaleRosterData.cpp`,
+`src/servers/launch/InitRealTimeClockJob.cpp`). The earlier Time crash in
+`nsdispatch` did not reproduce from the command line once the clock was close.
