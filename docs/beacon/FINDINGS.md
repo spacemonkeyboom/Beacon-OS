@@ -338,3 +338,12 @@ QQuickWidget renders through the OpenGL path above.
 so its retry loop never ran again. Fix (`src/preferences/time/Time.cpp`):
 each boot attempt runs in its own thread with a 15 s limit (a hung attempt is
 abandoned), retries every 2 s at first, then every 10 s, up to 20 tries.
+
+## Clock re-syncs on every network reconnect
+
+*Confirmed on the Orange Pi RV (rv63, 2026-11-25).* The `update-time` job
+(`on network_available`) is relaunched each time the network comes back: the
+launch daemon resets the sticky event when the network goes away and
+relaunches a finished job when it fires again (launch_roster log: Wi-Fi
+disabled and re-enabled, job relaunched in the same second). No extra code
+needed beyond the NetworkWatcher re-check above.
