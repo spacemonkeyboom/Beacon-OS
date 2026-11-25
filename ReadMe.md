@@ -61,7 +61,7 @@ Beacon 0.2:
 | Bluetooth | Planned |
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
-| Web browser: WebPositive (HaikuWebKit 1.10.0, HTTPS) | Works (0.4); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
+| Web browser: WebPositive (HaikuWebKit 1.10.0, HTTPS) | Works (0.4.1); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
 | Vulkan, Qt + Falkon | Planned next |
 
 **For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
@@ -73,10 +73,9 @@ Known issues:
 
 * The first boot after flashing unpacks packages and takes a few minutes;
   `package_daemon` may show a crash dialog then (click *Terminate*).
-* Set the clock by hand before browsing (no battery-backed clock; network
-  time sync currently crashes the Time preferences). HTTPS fails while the
-  date is wrong.
-* Wi-Fi drops after being idle and does not reconnect by itself (0.4).
+* The desktop may be white for a moment at startup, with patches of the
+  desktop colour where the mouse moves, until the wallpaper appears.
+* Wi-Fi drops after being idle and does not reconnect by itself (0.4.1).
 * Occasional kernel panic "Failed to acquire spinlock" (stale-TLB fault
   during an interrupt); a fix is in progress.
 * Some keyboards with gaming "N-key rollover" reports may not type.
