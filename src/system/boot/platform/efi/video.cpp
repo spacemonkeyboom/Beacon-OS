@@ -182,6 +182,66 @@ depth_from_mode_info(efi_graphics_output_mode_information* info)
 }
 
 
+#ifdef __riscv
+#include "arch/riscv64/riscv_boot_logo.h"
+
+
+// Beacon: replace the firmware's boot logo with RISC-V International's
+// official logo on Berkeley Blue as soon as the loader has video. Draws into
+// the mode the firmware left active; the Beacon splash follows later.
+static void
+beacon_draw_riscv_screen(void)
+{
+	if (sGraphicsOutput == NULL || sGraphicsOutput->Mode == NULL
+		|| sGraphicsOutput->Mode->Info == NULL)
+		return;
+	efi_graphics_output_mode_information* info = sGraphicsOutput->Mode->Info;
+	bool bgr;
+	if (info->PixelFormat == PixelBlueGreenRedReserved8BitPerColor)
+		bgr = true;
+	else if (info->PixelFormat == PixelRedGreenBlueReserved8BitPerColor)
+		bgr = false;
+	else
+		return;
+
+	uint32 width = info->HorizontalResolution;
+	uint32 height = info->VerticalResolution;
+	uint32 stride = info->PixelsPerScanLine;
+	uint32* frameBuffer = (uint32*)(addr_t)sGraphicsOutput->Mode->FrameBufferBase;
+	if (frameBuffer == NULL || width < kRiscvLogoWidth
+		|| height < kRiscvLogoHeight)
+		return;
+
+	auto pack = [bgr](const uint8* rgb) -> uint32 {
+		return bgr ? ((uint32)rgb[0] << 16 | (uint32)rgb[1] << 8 | rgb[2])
+			: ((uint32)rgb[2] << 16 | (uint32)rgb[1] << 8 | rgb[0]);
+	};
+
+	uint32 background = pack(kRiscvLogoBackground);
+	for (uint32 y = 0; y < height; y++) {
+		uint32* row = frameBuffer + y * stride;
+		for (uint32 x = 0; x < width; x++)
+			row[x] = background;
+	}
+
+	uint32 left = (width - kRiscvLogoWidth) / 2;
+	uint32 top = (height - kRiscvLogoHeight) / 2;
+	uint32 x = 0, y = 0;
+	for (size_t i = 0; i + 1 < sizeof(kRiscvLogoRuns); i += 2) {
+		uint32 color = pack(&kRiscvLogoPalette[kRiscvLogoRuns[i + 1] * 3]);
+		for (uint32 n = kRiscvLogoRuns[i]; n > 0; n--) {
+			frameBuffer[(top + y) * stride + left + x] = color;
+			if (++x == kRiscvLogoWidth) {
+				x = 0;
+				if (++y == kRiscvLogoHeight)
+					return;
+			}
+		}
+	}
+}
+#endif
+
+
 extern "C" status_t
 platform_init_video(void)
 {
@@ -255,6 +315,10 @@ platform_init_video(void)
 	gKernelArgs.frame_buffer.enabled = true;
 	sModeChosen = false;
 	sSettingsLoaded = false;
+
+#ifdef __riscv
+	beacon_draw_riscv_screen();
+#endif
 
 	status = kBootServices->LocateProtocol(&sEdidActiveGuid, NULL, (void **)&sEdidActiveProtocol);
 	if ((sEdidActiveProtocol != NULL) && (status == EFI_SUCCESS)

@@ -12,3 +12,7 @@
 
 Colours: blue #0144B5 ("Be"), red #E7111B ("acon"), after the classic BeOS blue/red.
 The lettering is original artwork, not the BeOS logo.
+
+The boot screen uses RISC-V International's official logo (see
+`data/artwork/riscv/README.md`). RISC-V and the RISC-V logo are registered
+trademarks of RISC-V International; Beacon is not affiliated with them.

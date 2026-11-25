@@ -11,6 +11,8 @@ Haiku and BeOS-style applications run unchanged.
 Beacon is an independent project. It is based on Haiku's source code but is
 **not affiliated with or endorsed by Haiku, Inc.** "Haiku" is a trademark of
 Haiku, Inc.; it is used here only to describe where the code comes from.
+RISC-V and the RISC-V logo (shown on the boot screen) are registered
+trademarks of RISC-V International; Beacon is not affiliated with them.
 
 Development is AI-assisted.
 
