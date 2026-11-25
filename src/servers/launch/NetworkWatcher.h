@@ -10,6 +10,9 @@
 #include <ObjectList.h>
 
 
+class BMessageRunner;
+
+
 class NetworkListener {
 public:
 	virtual						~NetworkListener();
@@ -41,6 +44,8 @@ protected:
 			BObjectList<NetworkListener>
 								fListeners;
 			bool				fAvailable;
+			BMessageRunner*		fRecheckRunner;
+				// Beacon: periodic re-check (see NetworkWatcher.cpp)
 };
 
 

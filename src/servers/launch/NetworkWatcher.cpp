@@ -11,6 +11,7 @@
 
 #include <Application.h>
 #include <Autolock.h>
+#include <MessageRunner.h>
 #include <NetworkDevice.h>
 #include <NetworkInterface.h>
 #include <NetworkRoster.h>
@@ -20,6 +21,13 @@
 
 static const bigtime_t kNetworkUpdateInterval = 1000000;
 	// Update network availability every second
+
+// Beacon: a link change (IFF_LINK) usually arrives while DHCP is still
+// running (IFF_CONFIGURING), and on the Orange Pi RV's Wi-Fi no later
+// notification made the network count as available, so "network_available"
+// jobs (time sync, time zone setup) never ran. Re-check every 5 seconds.
+static const uint32 kMsgRecheckNetwork = 'nwRc';
+static const bigtime_t kRecheckInterval = 5000000;
 
 static BLocker sLocker("network watcher");
 static NetworkWatcher* sWatcher;
@@ -39,13 +47,17 @@ NetworkListener::~NetworkListener()
 NetworkWatcher::NetworkWatcher()
 	:
 	BHandler("network watcher"),
-	fAvailable(false)
+	fAvailable(false),
+	fRecheckRunner(NULL)
 {
 	if (be_app->Lock()) {
 		be_app->AddHandler(this);
 
 		start_watching_network(B_WATCH_NETWORK_INTERFACE_CHANGES
 			| B_WATCH_NETWORK_LINK_CHANGES, this);
+		BMessage recheck(kMsgRecheckNetwork);
+		fRecheckRunner = new BMessageRunner(BMessenger(this), &recheck,
+			kRecheckInterval);
 		be_app->Unlock();
 	}
 }
@@ -53,6 +65,7 @@ NetworkWatcher::NetworkWatcher()
 
 NetworkWatcher::~NetworkWatcher()
 {
+	delete fRecheckRunner;
 	if (be_app->Lock()) {
 		stop_watching_network(this);
 
@@ -70,6 +83,11 @@ NetworkWatcher::AddListener(NetworkListener* listener)
 
 	if (fListeners.CountItems() == 1)
 		UpdateAvailability();
+	else if (fAvailable) {
+		// Beacon: a listener added after the network came up must hear
+		// about it too.
+		listener->NetworkAvailabilityChanged(true);
+	}
 }
 
 
@@ -94,6 +112,7 @@ NetworkWatcher::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
 		case B_NETWORK_MONITOR:
+		case kMsgRecheckNetwork:
 			UpdateAvailability();
 			break;
 	}

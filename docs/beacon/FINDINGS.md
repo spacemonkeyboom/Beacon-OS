@@ -261,3 +261,22 @@ with expat, its default XML parser.
 *Confirmed (Orange Pi RV, 2026-11-25).* A Qt Widgets window and a
 QNetworkAccessManager HTTPS request work. Cross-build notes, patch and
 configure scripts: [QT5.md](QT5.md).
+
+## "network_available" jobs never ran (time sync, time zone prompt)
+
+*Pending (rv63).* On rv62, `launch_roster info update-time` showed the job
+never launched. The launch daemon's NetworkWatcher only re-evaluates on
+network-monitor messages; the Wi-Fi link came up while DHCP was still
+running (`IFF_CONFIGURING`), and no later message made the network count as
+available. Also, a listener registered after the network was up was never
+told. Fix (`src/servers/launch/NetworkWatcher.cpp`): re-check every 5 s and
+notify late listeners at once.
+
+## NSPR 4.39 on Haiku riscv64
+
+*Built (2026-11-25), not yet run.* HaikuPorts' NSPR patches have no riscv64
+case: add riscv64 to the two Haiku headers and restrict the x86 atomics
+assembly in `configure.in` to x86 (riscv64 uses the C atomics). Patch:
+`beacon-nspr-4.39-riscv64.patch` (to be added under docs/beacon/qt5 with the
+Falkon work). NSS cross-builds with a host `nsinstall` and `CROSS_COMPILE=1`
+(no shlibsign/FIPS .chk files, as distros do).

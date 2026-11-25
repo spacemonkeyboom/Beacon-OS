@@ -1,0 +1,50 @@
+diff --git a/configure.in b/configure.in
+index e4ddd33..5a65266 100644
+--- a/configure.in
++++ b/configure.in
+@@ -1406,11 +1406,13 @@ tools are selected during the Xcode/Developer Tools installation.])
+     USE_PTHREADS=1
+     IMPL_STRATEGY=_PTH
+     MDCPUCFG_H=_haiku.cfg
+-    if test -n "$USE_64"; then
+-        PR_MD_ASFILES=os_Linux_x86_64.s
+-    else
+-        PR_MD_ASFILES=os_Linux_x86.s
+-    fi
++    dnl Beacon: the x86 atomics asm only for x86; other CPUs use C.
++    case "$target_cpu" in
++    x86_64|amd64)
++        PR_MD_ASFILES=os_Linux_x86_64.s ;;
++    i?86)
++        PR_MD_ASFILES=os_Linux_x86.s ;;
++    esac
+     PR_MD_CSRCS=linux.c
+     MKSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
+     DSO_CFLAGS=-fPIC
+diff --git a/pr/include/md/_haiku.cfg b/pr/include/md/_haiku.cfg
+index 3cf3cd9..4eb8b24 100644
+--- a/pr/include/md/_haiku.cfg
++++ b/pr/include/md/_haiku.cfg
+@@ -16,7 +16,8 @@
+ 
+ #define PR_AF_INET6 5  /* same as AF_INET6 */
+ 
+-#if defined(__x86_64__)
++/* Beacon: riscv64 uses the same LP64 little-endian layout as x86_64. */
++#if defined(__x86_64__) || (defined(__riscv) && __riscv_xlen == 64)
+ 
+ #ifdef __ILP32__
+ 
+diff --git a/pr/include/md/_haiku.h b/pr/include/md/_haiku.h
+index a9bde33..74cd2a5 100644
+--- a/pr/include/md/_haiku.h
++++ b/pr/include/md/_haiku.h
+@@ -28,6 +28,8 @@
+ #define _PR_SI_ARCHITECTURE "aarch64"
+ #elif defined(__arm__)
+ #define _PR_SI_ARCHITECTURE "arm"
++#elif defined(__riscv) && __riscv_xlen == 64
++#define _PR_SI_ARCHITECTURE "riscv64"
+ #elif defined(__mips64__)
+ #define _PR_SI_ARCHITECTURE "mips64"
+ #elif defined(__mips__)
