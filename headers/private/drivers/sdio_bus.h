@@ -247,6 +247,13 @@ typedef struct sdio_bus_interface {
 	// CMD52 write of the function number to CCCR ABORT (aborts a CMD53 in
 	// progress for that function).
 	status_t	(*abort)(void* cookie, uint8 function);
+
+	// Beacon: power-cycle the card (host reset GPIO) and enumerate it again,
+	// to revive a card that stopped answering. Afterwards every function is
+	// disabled, block sizes and interrupt enables are at their power-on
+	// values: set them again. Installed handlers are kept. B_NOT_SUPPORTED
+	// if the host cannot power-cycle the slot.
+	status_t	(*reset_card)(void* cookie);
 } sdio_bus_interface;
 
 

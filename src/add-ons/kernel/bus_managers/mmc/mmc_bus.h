@@ -150,6 +150,8 @@ public:
 				void			SetClock(int frequency);
 				void			SetBusWidth(int width);
 				void			SetCardType(card_type type);
+				status_t		PowerCycle();
+					// Beacon: host power_cycle hook, B_NOT_SUPPORTED if none
 
 				void			AcquireBus() { acquire_sem(fLockSemaphore); }
 				void			ReleaseBus() { release_sem(fLockSemaphore); }

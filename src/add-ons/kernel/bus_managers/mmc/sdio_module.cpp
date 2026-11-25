@@ -184,6 +184,13 @@ sdio_abort(void* cookie, uint8 function)
 
 
 static status_t
+sdio_reset_card(void* cookie)
+{
+	return card_of(cookie)->Reset();
+}
+
+
+static status_t
 sdio_std_ops(int32 op, ...)
 {
 	switch (op) {
@@ -226,5 +233,6 @@ sdio_bus_interface gSdioFunctionModule = {
 	sdio_install_interrupt_handler,
 	sdio_remove_interrupt_handler,
 	sdio_set_bus_clock,
-	sdio_abort
+	sdio_abort,
+	sdio_reset_card
 };

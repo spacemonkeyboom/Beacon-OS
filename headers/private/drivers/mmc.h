@@ -132,6 +132,11 @@ typedef struct mmc_bus_interface {
 	void (*enable_sdio_irq)(void* controller, bool enable);
 		// Unmask (true) or mask the host's SDIO card interrupt. Also used to
 		// re-arm it after the handlers have run.
+	status_t (*power_cycle)(void* controller);
+		// Beacon: power-cycle the card in the slot (SDIO reset/enable GPIO,
+		// mmc-pwrseq) and put the host back to its enumeration state (reset,
+		// 400 kHz, 1-bit). Used to revive an SDIO card that stopped
+		// answering. NULL if the host cannot do it.
 } mmc_bus_interface;
 
 

@@ -48,6 +48,9 @@ struct sdmmc_softc {
 	struct sdio_bus_interface	*sc_sdio;
 	void						*sc_sdio_cookie;
 	struct haiku_sdio_device	*sc_haiku;
+	volatile int				 sc_io_timeouts;
+		/* Beacon: consecutive timed-out SDIO operations (reset on
+		 * success); a dead card makes this climb fast */
 
 	/* one card interrupt handler (as in OpenBSD, per sdmmc bus) */
 	int		(*sc_intr_fn)(void *);
@@ -82,6 +85,8 @@ void		sdmmc_io_set_blocklen(struct sdmmc_function *, unsigned int);
 int			sdmmc_io_function_ready(struct sdmmc_function *);
 int			sdmmc_io_function_enable(struct sdmmc_function *);
 void		sdmmc_io_function_disable(struct sdmmc_function *);
+int			sdmmc_io_reset_card(struct sdmmc_softc *);
+			/* Beacon: power-cycle and re-enumerate the card */
 
 /*
  * Card interrupt. OpenBSD takes the sdmmc bus device; here it is the

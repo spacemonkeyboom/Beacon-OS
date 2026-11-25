@@ -347,3 +347,24 @@ launch daemon resets the sticky event when the network goes away and
 relaunches a finished job when it fires again (launch_roster log: Wi-Fi
 disabled and re-enabled, job relaunched in the same second). No extra code
 needed beyond the NetworkWatcher re-check above.
+
+## Wi-Fi chip recovery without a reboot (AP6256 / BCM43456 over SDIO)
+
+*Pending (rv65).* On the Orange Pi RV the Wi-Fi chip sometimes (a) stops
+answering on SDIO altogether: every CMD52/CMD53, even CCCR reads, times out;
+or (b) sends a stream of IF events (code 54) with its scans never finishing.
+Only a power cycle helped. Recovery now does what a power cycle does:
+
+* `dw_mmc`: new host hook `power_cycle` (mmc_bus_interface): pulse the
+  reset GPIO (mmc-pwrseq-simple, GPIO 62), reset the controller, back to
+  400 kHz, 1-bit.
+* SDIO bus manager: `reset_card` (sdio_bus_interface): power-cycle, enumerate
+  again (CMD5, CMD3, CMD7, CCCR, CIS, bus width/clock), restore CCCR
+  INT_ENABLE for functions that still have handlers.
+* `broadcomfullmac`: count consecutive SDIO timeouts (30 = dead) and IF
+  events (200 in 10 s = wedged); a restart thread takes net80211 to INIT,
+  resets the card, redoes the chip setup (split out of attach as
+  `bwfm_sdio_chip_setup()`), clears `sc_initialized` and calls `bwfm_init()`,
+  which reloads the firmware and rejoins. At most once a minute, gives up
+  after 5 failures in a row. Heavy packet loss without errors is not yet
+  detected.

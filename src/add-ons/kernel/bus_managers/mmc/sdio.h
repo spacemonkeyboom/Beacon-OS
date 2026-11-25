@@ -39,6 +39,7 @@ public:
 
 	// Called by the scan thread with the bus lock held.
 			status_t			Enumerate(uint32 ocr);
+			status_t			Reset();
 	// Called by the scan thread WITHOUT the bus lock.
 			void				PublishFunctions(device_node* busNode);
 

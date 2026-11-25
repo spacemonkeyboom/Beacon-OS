@@ -1317,6 +1317,28 @@ DwMmcHost::_SdioPowerSequence(const char* why)
 }
 
 
+/*!	Beacon: revive an SDIO card that stopped answering (all commands time
+	out): power-cycle it through the reset GPIO, then reset the controller
+	and go back to 400 kHz, 1-bit, so the bus manager can enumerate it
+	again.
+*/
+status_t
+DwMmcHost::PowerCycle()
+{
+	MutexLocker locker(fLock);
+	if (fGpio == NULL || fConfig.resetGpio < 0)
+		return B_NOT_SUPPORTED;
+
+	_SdioPowerSequence("recovery");
+	if (!_ResetController(kDwCtrlAllResetFlags))
+		ERROR("%s: controller reset after power cycle failed\n", fConfig.name);
+	_Ack(0xffffffff);
+	_Write(kDwCtype, kDwCtype1Bit);
+	fBusWidth = 1;
+	return _SetClockHz(400000);
+}
+
+
 void
 DwMmcHost::_SetupJh7110Gpio()
 {

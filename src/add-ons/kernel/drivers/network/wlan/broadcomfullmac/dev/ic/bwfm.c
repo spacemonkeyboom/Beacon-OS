@@ -2727,6 +2727,23 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 		    ntohl(e->msg.event_type), ntohl(e->msg.status),
 		    ntohl(e->msg.reason), ntohs(e->msg.flags));
 
+#ifdef __HAIKU__
+	/* Beacon: a stream of IF events (seen with a wedged chip whose scans
+	 * never finished) asks the bus driver to restart the chip. */
+	if (ntohl(e->msg.event_type) == BWFM_E_IF) {
+		uint64_t now = system_time();
+		if (now - sc->sc_if_window > 10000000) {
+			sc->sc_if_window = now;
+			sc->sc_if_events = 0;
+		}
+		if (++sc->sc_if_events == 200) {
+			printf("%s: IF event storm (200 in 10 s), restarting the "
+			    "chip\n", DEVNAME(sc));
+			sc->sc_restart_wanted = 1;
+		}
+	}
+#endif
+
 	switch (ntohl(e->msg.event_type)) {
 	case BWFM_E_ESCAN_RESULT: {
 		struct bwfm_escan_results *res;

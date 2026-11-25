@@ -203,6 +203,15 @@ MMCBus::SetCardType(card_type type)
 
 
 status_t
+MMCBus::PowerCycle()
+{
+	if (fController->power_cycle == NULL)
+		return B_NOT_SUPPORTED;
+	return fController->power_cycle(fCookie);
+}
+
+
+status_t
 MMCBus::_ActivateDevice(uint16_t rca)
 {
 	// Do nothing if the device is already activated
