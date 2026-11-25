@@ -73,6 +73,10 @@ Known issues:
 
 * The first boot after flashing unpacks packages and takes a few minutes;
   `package_daemon` may show a crash dialog then (click *Terminate*).
+* **Time zone at first login:** Beacon looks up a suggested time zone once,
+  from your internet address, with one HTTPS request to ipapi.co, and asks
+  you to confirm it or choose another. Nothing else is sent, and it does
+  not run again.
 * The desktop may be white for a moment at startup, with patches of the
   desktop colour where the mouse moves, until the wallpaper appears.
 * Wi-Fi drops after being idle and does not reconnect by itself (0.4.1).

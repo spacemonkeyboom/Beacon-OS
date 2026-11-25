@@ -26,6 +26,7 @@
 #include "NetworkTimeView.h"
 #include "TimeMessages.h"
 #include "TimeWindow.h"
+#include "TimeZoneSetup.h"
 
 
 #undef B_TRANSLATION_CONTEXT
@@ -100,6 +101,9 @@ int
 main(int argc, char** argv)
 {
 	if (argc > 1) {
+		if (strcmp(argv[1], "--setup-timezone") == 0)
+			return run_time_zone_setup();
+
 		bool bootUpdate = strcmp(argv[1], "--boot-update") == 0;
 		if (strcmp(argv[1], "--update") != 0 && !bootUpdate) {
 			fprintf(stderr, "Usage: %s [--update]\n", argv[0]);

@@ -40,6 +40,14 @@ target desktop {
 		launch /system/bin/dstcheck
 	}
 
+	# Beacon: ask once which time zone to use (suggested from the internet
+	# address via ipapi.co), at the first login with a network.
+	job beacon-timezone-setup {
+		launch /system/preferences/Time --setup-timezone
+		if not file_exists ~/config/settings/beacon_timezone_asked
+		on network_available
+	}
+
 	job update-time {
 		# Beacon: on by default; Time --boot-update honours the user's
 		# "synchronize at boot" choice once the settings file exists.
