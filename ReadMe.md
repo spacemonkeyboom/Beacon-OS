@@ -16,7 +16,16 @@ Development is AI-assisted.
 
 ## Screenshots
 
-Beacon 0.3 running on an Orange Pi RV (8 GB), captured on the board itself:
+Beacon 0.4 running WebPositive on an Orange Pi RV (8 GB), captured on the board itself:
+
+<p align="center">
+  <img src="docs/beacon/screenshots/beacon-0.4-webpositive.jpg" alt="Beacon 0.4: WebPositive showing The Register and Slashdot over HTTPS" width="860">
+</p>
+<p align="center">
+  <img src="docs/beacon/screenshots/beacon-0.4-webpositive-2.jpg" alt="Beacon 0.4: WebPositive with a Google search for BeOS and CNN, ActivityMonitor showing all four cores" width="860">
+</p>
+
+Beacon 0.3:
 
 <p align="center">
   <img src="docs/beacon/screenshots/beacon-0.3-desktop.jpg" alt="Beacon 0.3 desktop: About Beacon, Terminal showing gcc 13.2 and the app list, ActivityMonitor and DeskCalc" width="860">
@@ -47,7 +56,8 @@ Beacon 0.2:
 | Bluetooth | Planned |
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
-| Web browser | In progress (WebPositive first, Falkon later) |
+| Web browser: WebPositive (HaikuWebKit 1.10.0, HTTPS) | Works (0.4); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
+| Vulkan, Qt + Falkon | Planned next |
 
 **For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
 lists the bugs and hardware quirks we found (RISC-V TLB faults, VL805 USB,
@@ -56,7 +66,14 @@ driver folder also has a README and a THIRD_PARTY.md.
 
 Known issues:
 
-* The first boot after flashing unpacks packages and takes a few minutes.
+* The first boot after flashing unpacks packages and takes a few minutes;
+  `package_daemon` may show a crash dialog then (click *Terminate*).
+* Set the clock by hand before browsing (no battery-backed clock; network
+  time sync currently crashes the Time preferences). HTTPS fails while the
+  date is wrong.
+* Wi-Fi drops after being idle and does not reconnect by itself (0.4).
+* Occasional kernel panic "Failed to acquire spinlock" (stale-TLB fault
+  during an interrupt); a fix is in progress.
 * Some keyboards with gaming "N-key rollover" reports may not type.
 * The boot loader currently restores the HDMI pipeline from U-Boot's state;
   a proper display driver is planned.
@@ -113,7 +130,7 @@ For the Orange Pi RV image:
 ```
 mkdir generated.riscv64 && cd generated.riscv64
 ../configure --cross-tools-source ../../buildtools --build-cross-tools riscv64 -j4
-jam -q -j4 @nightly-mmc     # full image (0.3); @minimum-mmc for a small one
+jam -q -j4 @nightly-mmc     # full image (0.4); @minimum-mmc for a small one
 ```
 
 ## Licences
