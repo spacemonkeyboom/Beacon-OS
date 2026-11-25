@@ -75,12 +75,13 @@ BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 	attr_info info;
 	if (node->GetAttrInfo(kBackgroundImageInfo, &info) != B_OK) {
 		// Beacon: on first run the Desktop has no background yet; give it the
-		// Beacon wallpaper, written as a normal setting so the Backgrounds
+		// Beacon wallpaper (3; 4 becomes the default with the Vulkan release),
+		// written as a normal setting so the Backgrounds
 		// preferences show it and can change it.
 		BPath wallpaper;
 		if (!isDesktop
 			|| find_directory(B_SYSTEM_DATA_DIRECTORY, &wallpaper) != B_OK
-			|| wallpaper.Append("artwork/beacon-wallpaper.bmp") != B_OK
+			|| wallpaper.Append("artwork/beacon-wallpaper-3.bmp") != B_OK
 			|| access(wallpaper.Path(), R_OK) != 0)
 			return NULL;
 
