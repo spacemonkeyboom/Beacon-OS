@@ -264,7 +264,8 @@ configure scripts: [QT5.md](QT5.md).
 
 ## "network_available" jobs never ran (time sync, time zone prompt)
 
-*Pending (rv63).* On rv62, `launch_roster info update-time` showed the job
+*Confirmed fixed on the Orange Pi RV (rv63, 2026-11-25): update-time ran by
+itself and set the clock.* On rv62, `launch_roster info update-time` showed the job
 never launched. The launch daemon's NetworkWatcher only re-evaluates on
 network-monitor messages; the Wi-Fi link came up while DHCP was still
 running (`IFF_CONFIGURING`), and no later message made the network count as
@@ -283,7 +284,8 @@ Falkon work). NSS cross-builds with a host `nsinstall` and `CROSS_COMPILE=1`
 
 ## SSH dead after first boot: zero-filled host keys
 
-*Confirmed cause (rv62, 2026-11-25); fix pending test.* `sshd` refused to
+*Confirmed cause (rv62) and fix (rv63, 2026-11-25): keys valid, SSH works
+after a fresh flash.* `sshd` refused to
 start ("unable to load host key: error in libcrypto"). All six key files had
 their right sizes but held only zero bytes, dated 1970. They were made on the
 first boot, before the clock was set; power was then cut (restart hangs on
@@ -292,3 +294,15 @@ had already journaled the sizes. `ssh-keygen -A` only makes missing keys, so
 SSH stayed broken. Fix (`data/beacon/beacon-sshd`): test every host key with
 `ssh-keygen -y`, move unreadable ones aside as `*.bad`, regenerate, `sync`.
 Lesson for other first-boot writers: `sync` after writing anything vital.
+
+## Static over the boot splash (JH7110, uncached frame buffer)
+
+*Confirmed fixed on the Orange Pi RV (rv63, 2026-11-25).* Since we draw the
+splash through the uncached DDR alias (0x4_4000_0000), U-Boot's own logo,
+drawn through the cached port, left dirty L2 lines over the frame buffer.
+Their later eviction wrote old pixels over the splash (static while the boot
+icons light up). Fix: flush the frame buffer range (by its cached address,
+through the ccache Flush64 register) before drawing the RISC-V screen,
+around the splash, and before ExitBootServices
+(`src/system/boot/platform/efi/video.cpp`, `arch/riscv64/arch_dtb.cpp`,
+`arch/riscv64/arch_start.cpp`).
