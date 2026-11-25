@@ -182,6 +182,9 @@ struct bwfm_softc {
 
 	int			 sc_node;
 	int			 sc_initialized;
+	volatile int		 sc_restart_wanted;	/* Beacon: bus restarts chip */
+	uint32_t		 sc_if_events;		/* Beacon: IF events this window */
+	uint64_t		 sc_if_window;		/* Beacon: window start (us) */
 	int			 sc_tx_timer;
 
 	int			 sc_scan_ver;

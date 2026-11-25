@@ -515,6 +515,13 @@ dw_mmc_enable_sdio_irq(void* controller, bool enable)
 }
 
 
+static status_t
+dw_mmc_power_cycle(void* controller)
+{
+	return ((DwMmcHost*)controller)->PowerCycle();
+}
+
+
 mmc_bus_interface gDwMmcBusModule = {
 	.info = {
 		.info = {
@@ -537,6 +544,7 @@ mmc_bus_interface gDwMmcBusModule = {
 	.execute_buffer_command = dw_mmc_execute_buffer_command,
 	.set_sdio_irq_semaphore = dw_mmc_set_sdio_irq_semaphore,
 	.enable_sdio_irq = dw_mmc_enable_sdio_irq,
+	.power_cycle = dw_mmc_power_cycle,
 };
 
 

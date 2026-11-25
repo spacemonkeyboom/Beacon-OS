@@ -137,6 +137,10 @@ struct bwfm_sdio_softc {
 #ifdef __HAIKU__
 	struct sdmmc_softc	  sc_sdmmc;	/* the card (sdmmc_io_haiku.c) */
 	int			  sc_attach_done;	/* attach reached bwfm_attach() */
+	/* Beacon: chip recovery (power cycle + firmware reload) */
+	volatile int		  sc_restarting;
+	bigtime_t		  sc_last_restart;
+	int			  sc_restart_failures;
 #endif
 };
 
@@ -150,6 +154,11 @@ int		 bwfm_sdio_oob_intr(void *);
 void		 bwfm_sdio_task(void *);
 static void	 bwfm_sdio_kick(struct bwfm_sdio_softc *);
 static status_t	 bwfm_sdio_poller(void *);
+static int	 bwfm_sdio_chip_setup(struct bwfm_sdio_softc *);
+static status_t	 bwfm_sdio_restart_thread(void *);
+static void	 bwfm_sdio_check_dead(struct bwfm_sdio_softc *);
+void		 bwfm_init(struct ifnet *);
+void		 bwfm_chip_detach(struct bwfm_softc *);
 int		 bwfm_sdio_load_microcode(struct bwfm_sdio_softc *,
 		    u_char *, size_t, u_char *, size_t);
 
@@ -277,14 +286,81 @@ bwfm_sdio_match(struct device *parent, void *match, void *aux)
 	return 1;
 }
 
+#ifdef __HAIKU__
+/*
+ * Beacon: the chip part of attach, also used to restart the chip after the
+ * card was power-cycled (bwfm_sdio_restart_thread()). Returns 0 on success.
+ */
+#endif
+static int
+bwfm_sdio_chip_setup(struct bwfm_sdio_softc *sc)
+{
+	struct bwfm_core *core;
+	uint32_t reg;
+
+	sdmmc_io_set_blocklen(sc->sc_sf[1], 64);
+	sdmmc_io_set_blocklen(sc->sc_sf[2], 512);
+
+	/* Enable Function 1. */
+	if (sdmmc_io_function_enable(sc->sc_sf[1]) != 0) {
+		printf("%s: cannot enable function 1\n", DEVNAME(sc));
+		return 1;
+	}
+
+	DPRINTF(("%s: F1 signature read @0x18000000=%x\n", DEVNAME(sc),
+	    bwfm_sdio_read_4(sc, 0x18000000)));
+
+	/* Force PLL off */
+	bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR,
+	    BWFM_SDIO_FUNC1_CHIPCLKCSR_FORCE_HW_CLKREQ_OFF |
+	    BWFM_SDIO_FUNC1_CHIPCLKCSR_ALP_AVAIL_REQ);
+
+	sc->sc_sc.sc_buscore_ops = &bwfm_sdio_buscore_ops;
+	if (bwfm_chip_attach(&sc->sc_sc) != 0) {
+		printf("%s: cannot attach chip\n", DEVNAME(sc));
+		return 1;
+	}
+
+	sc->sc_cc = bwfm_chip_get_core(&sc->sc_sc, BWFM_AGENT_CORE_CHIPCOMMON);
+	if (sc->sc_cc == NULL) {
+		printf("%s: cannot find chipcommon core\n", DEVNAME(sc));
+		return 1;
+	}
+
+	core = bwfm_chip_get_core(&sc->sc_sc, BWFM_AGENT_CORE_SDIO_DEV);
+	if (core->co_rev >= 12) {
+		reg = bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_SLEEPCSR);
+		if (!(reg & BWFM_SDIO_FUNC1_SLEEPCSR_KSO)) {
+			reg |= BWFM_SDIO_FUNC1_SLEEPCSR_KSO;
+			bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_SLEEPCSR, reg);
+		}
+	}
+
+	/* TODO: drive strength */
+
+	bwfm_sdio_write_1(sc, BWFM_SDIO_CCCR_BRCM_CARDCTRL,
+	    bwfm_sdio_read_1(sc, BWFM_SDIO_CCCR_BRCM_CARDCTRL) |
+	    BWFM_SDIO_CCCR_BRCM_CARDCTRL_WLANRESET);
+
+	core = bwfm_chip_get_pmu(&sc->sc_sc);
+	bwfm_sdio_write_4(sc, core->co_base + BWFM_CHIP_REG_PMUCONTROL,
+	    bwfm_sdio_read_4(sc, core->co_base + BWFM_CHIP_REG_PMUCONTROL) |
+	    (BWFM_CHIP_REG_PMUCONTROL_RES_RELOAD <<
+	     BWFM_CHIP_REG_PMUCONTROL_RES_SHIFT));
+
+	sdmmc_io_function_disable(sc->sc_sf[2]);
+
+	bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR, 0);
+	sc->sc_clkstate = CLK_SDONLY;
+	return 0;
+}
+
 void
 bwfm_sdio_attach(struct device *parent, struct device *self, void *aux)
 {
 	struct bwfm_sdio_softc *sc = (struct bwfm_sdio_softc *)self;
 	struct sdmmc_attach_args *saa = aux;
 	struct sdmmc_function *sf = saa->sf;
-	struct bwfm_core *core;
-	uint32_t reg;
 
 #ifndef __HAIKU__
 	printf("\n");
@@ -321,60 +397,8 @@ bwfm_sdio_attach(struct device *parent, struct device *self, void *aux)
 #endif
 	sf = saa->sf;
 
-	sdmmc_io_set_blocklen(sc->sc_sf[1], 64);
-	sdmmc_io_set_blocklen(sc->sc_sf[2], 512);
-
-	/* Enable Function 1. */
-	if (sdmmc_io_function_enable(sc->sc_sf[1]) != 0) {
-		printf("%s: cannot enable function 1\n", DEVNAME(sc));
+	if (bwfm_sdio_chip_setup(sc) != 0)
 		goto err;
-	}
-
-	DPRINTF(("%s: F1 signature read @0x18000000=%x\n", DEVNAME(sc),
-	    bwfm_sdio_read_4(sc, 0x18000000)));
-
-	/* Force PLL off */
-	bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR,
-	    BWFM_SDIO_FUNC1_CHIPCLKCSR_FORCE_HW_CLKREQ_OFF |
-	    BWFM_SDIO_FUNC1_CHIPCLKCSR_ALP_AVAIL_REQ);
-
-	sc->sc_sc.sc_buscore_ops = &bwfm_sdio_buscore_ops;
-	if (bwfm_chip_attach(&sc->sc_sc) != 0) {
-		printf("%s: cannot attach chip\n", DEVNAME(sc));
-		goto err;
-	}
-
-	sc->sc_cc = bwfm_chip_get_core(&sc->sc_sc, BWFM_AGENT_CORE_CHIPCOMMON);
-	if (sc->sc_cc == NULL) {
-		printf("%s: cannot find chipcommon core\n", DEVNAME(sc));
-		goto err;
-	}
-
-	core = bwfm_chip_get_core(&sc->sc_sc, BWFM_AGENT_CORE_SDIO_DEV);
-	if (core->co_rev >= 12) {
-		reg = bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_SLEEPCSR);
-		if (!(reg & BWFM_SDIO_FUNC1_SLEEPCSR_KSO)) {
-			reg |= BWFM_SDIO_FUNC1_SLEEPCSR_KSO;
-			bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_SLEEPCSR, reg);
-		}
-	}
-
-	/* TODO: drive strength */
-
-	bwfm_sdio_write_1(sc, BWFM_SDIO_CCCR_BRCM_CARDCTRL,
-	    bwfm_sdio_read_1(sc, BWFM_SDIO_CCCR_BRCM_CARDCTRL) |
-	    BWFM_SDIO_CCCR_BRCM_CARDCTRL_WLANRESET);
-
-	core = bwfm_chip_get_pmu(&sc->sc_sc);
-	bwfm_sdio_write_4(sc, core->co_base + BWFM_CHIP_REG_PMUCONTROL,
-	    bwfm_sdio_read_4(sc, core->co_base + BWFM_CHIP_REG_PMUCONTROL) |
-	    (BWFM_CHIP_REG_PMUCONTROL_RES_RELOAD <<
-	     BWFM_CHIP_REG_PMUCONTROL_RES_SHIFT));
-
-	sdmmc_io_function_disable(sc->sc_sf[2]);
-
-	bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR, 0);
-	sc->sc_clkstate = CLK_SDONLY;
 
 	sc->sc_sc.sc_bus_ops = &bwfm_sdio_bus_ops;
 	sc->sc_sc.sc_proto_ops = &bwfm_proto_bcdc_ops;
@@ -760,9 +784,12 @@ bwfm_sdio_poller(void *arg)
 		acquire_sem_etc(sc->sc_poll_sem, 1, B_RELATIVE_TIMEOUT, 10000);
 		if (!sc->sc_poll_on)
 			break;
+		if (sc->sc_restarting)
+			continue;	/* Beacon: the restart thread owns the card */
 		mtx_lock(&Giant);
 		bwfm_sdio_task(sc);
 		mtx_unlock(&Giant);
+		bwfm_sdio_check_dead(sc);
 		/* Beacon: associated but nothing received for 3 minutes (with
 		 * power saving off, an AP's broadcasts arrive far more often):
 		 * ask bwfm to rejoin, at most once every 3 minutes. */
@@ -786,6 +813,97 @@ bwfm_sdio_poller(void *arg)
 			    sc->sc_rx_hdrs, sc->sc_last_rx == 0 ? -1LL
 			    : (long long)((system_time() - sc->sc_last_rx) / 1000));
 		}
+	}
+	return B_OK;
+}
+
+/*
+ * Beacon: chip recovery. Seen on the Orange Pi RV (AP6256): the chip can
+ * stop answering on SDIO altogether (every CMD52/CMD53 times out), or get
+ * stuck sending IF events with its scans never finishing. Either way only a
+ * power cycle helped. So: power-cycle the card through the host's reset
+ * GPIO, enumerate it again, redo the chip setup, reload the firmware
+ * (bwfm_init() with sc_initialized cleared) and let net80211 rejoin.
+ * At most once a minute; give up after 5 failures in a row.
+ */
+static void
+bwfm_sdio_check_dead(struct bwfm_sdio_softc *sc)
+{
+	const char *why = NULL;
+	bigtime_t now;
+
+	if (sc->sc_restarting || sc->sc_restart_failures >= 5)
+		return;
+	if (sc->sc_sdmmc.sc_io_timeouts >= 30)
+		why = "the chip stopped answering on SDIO";
+	else if (sc->sc_sc.sc_restart_wanted)
+		why = "the firmware asked for it";
+	if (why == NULL)
+		return;
+	now = system_time();
+	if (sc->sc_last_restart != 0 && now - sc->sc_last_restart < 60000000)
+		return;
+	sc->sc_last_restart = now;
+	sc->sc_sc.sc_restart_wanted = 0;
+	printf("%s: restarting the Wi-Fi chip: %s\n", DEVNAME(sc), why);
+	sc->sc_restarting = 1;
+	thread_id t = spawn_kernel_thread(bwfm_sdio_restart_thread,
+	    "bwfm chip restart", B_NORMAL_PRIORITY, sc);
+	if (t < 0) {
+		sc->sc_restarting = 0;
+		return;
+	}
+	resume_thread(t);
+}
+
+static status_t
+bwfm_sdio_restart_thread(void *arg)
+{
+	struct bwfm_sdio_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_sc.sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	int error;
+
+	/* Take the interface down in net80211 (no firmware commands: the
+	 * chip may not answer). */
+	mtx_lock(&Giant);
+	ifp->if_flags &= ~IFF_RUNNING;
+	ifq_clr_oactive(&ifp->if_snd);
+	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+	mtx_unlock(&Giant);
+
+	rw_enter_write(sc->sc_lock);
+	ml_purge(&sc->sc_tx_queue);
+	sc->sc_tx_count = 0;
+	sc->sc_tx_seq = 0xff;
+	bwfm_chip_detach(&sc->sc_sc);
+	error = sdmmc_io_reset_card(&sc->sc_sdmmc);
+	if (error == 0)
+		error = bwfm_sdio_chip_setup(sc);
+	rw_exit(sc->sc_lock);
+
+	sc->sc_sc.sc_initialized = 0;
+	sc->sc_last_rx = 0;
+	sc->sc_restarting = 0;	/* the poller serves the card again */
+
+	if (error != 0) {
+		sc->sc_restart_failures++;
+		printf("%s: chip restart failed (%d), attempt %d of 5\n",
+		    DEVNAME(sc), error, sc->sc_restart_failures);
+		return B_OK;
+	}
+
+	mtx_lock(&Giant);
+	if (ifp->if_flags & IFF_UP)
+		bwfm_init(ifp);	/* firmware, settings, then scan and rejoin */
+	mtx_unlock(&Giant);
+	if (sc->sc_sc.sc_initialized) {
+		sc->sc_restart_failures = 0;
+		printf("%s: chip restarted, rejoining\n", DEVNAME(sc));
+	} else {
+		sc->sc_restart_failures++;
+		printf("%s: chip restart: firmware did not come up, attempt %d "
+		    "of 5\n", DEVNAME(sc), sc->sc_restart_failures);
 	}
 	return B_OK;
 }

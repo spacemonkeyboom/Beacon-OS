@@ -293,6 +293,7 @@ public:
 									const mmc_buffer_transfer* transfer);
 			void				SetSdioIrqSemaphore(sem_id semaphore);
 			void				EnableSdioIrq(bool enable);
+			status_t			PowerCycle();
 
 private:
 	// Response kinds, see the SD/eMMC specs (R1..R7).

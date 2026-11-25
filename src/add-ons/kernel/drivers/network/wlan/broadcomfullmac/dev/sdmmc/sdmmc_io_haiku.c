@@ -38,8 +38,12 @@ static int
 sdmmc_haiku_error(struct sdmmc_function *sf, const char *what, int reg,
 	status_t status)
 {
-	if (status == B_OK)
+	if (status == B_OK) {
+		sf->sc->sc_io_timeouts = 0;
 		return 0;
+	}
+	if (status == B_TIMED_OUT)
+		sf->sc->sc_io_timeouts++;
 
 	if (sSdioErrorReports < SDMMC_MAX_ERROR_REPORTS) {
 		sSdioErrorReports++;
@@ -300,6 +304,29 @@ sdmmc_io_function_disable(struct sdmmc_function *sf)
 		return;
 	sdmmc_haiku_error(sf, "function_disable", SDIO_CCCR_IO_ENABLE,
 		SDIO(sf)->disable_function(COOKIE(sf), sf->number));
+}
+
+
+/*
+ * Beacon: power-cycle the card through the host's reset GPIO and enumerate
+ * it again. Afterwards functions are disabled and block sizes are at their
+ * defaults; the caller sets them up again.
+ */
+int
+sdmmc_io_reset_card(struct sdmmc_softc *sc)
+{
+	status_t status;
+
+	if (sc->sc_sdio->reset_card == NULL)
+		return ENODEV;
+	status = sc->sc_sdio->reset_card(sc->sc_sdio_cookie);
+	if (status == B_OK) {
+		sc->sc_io_timeouts = 0;
+		sSdioErrorReports = 0;
+		return 0;
+	}
+	return sdmmc_haiku_error(sc->sc_fn0 != NULL ? sc->sc_fn0
+		: &sc->sc_functions[0], "reset_card", 0, status);
 }
 
 

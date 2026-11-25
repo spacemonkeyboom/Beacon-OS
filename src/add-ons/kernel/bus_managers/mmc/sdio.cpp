@@ -857,6 +857,55 @@ SdioCard::SetBusClock(uint32 kilohertz)
 }
 
 
+/*!	Beacon: revive a card that stopped answering. Power-cycles it through the
+	host (reset GPIO), then enumerates it again (CMD5, CMD3, CMD7, CCCR, CIS,
+	bus width and clock). Function enables, block sizes and interrupt enables
+	are back at their power-on values: the function driver sets them again.
+	Installed interrupt handlers are kept.
+*/
+status_t
+SdioCard::Reset()
+{
+	fBus->AcquireBus();
+	status_t status = fBus->PowerCycle();
+	if (status != B_OK) {
+		fBus->ReleaseBus();
+		SDIO_ERROR("reset: host cannot power-cycle the card: %s\n",
+			strerror(status));
+		return status;
+	}
+	uint32_t ocr = 0;
+	for (int tries = 0; tries < 10; tries++) {
+		status = fBus->ExecuteCommand(0, SD_IO_SEND_OP_COND, 0, &ocr);
+		if (status == B_OK)
+			break;
+		snooze(20000);
+	}
+	if (status == B_OK)
+		status = Enumerate(ocr);
+	if (status == B_OK) {
+		// The power cycle cleared CCCR INT_ENABLE; restore it for the
+		// functions whose handlers are still installed.
+		uint8 enable = 0;
+		{
+			MutexLocker locker(fHandlerLock);
+			for (uint8 function = 1; function <= 7; function++) {
+				if (fHandlers[function] != NULL)
+					enable |= 1 | (1 << function);
+			}
+		}
+		if (enable != 0)
+			_WriteByteLocked(0, SDIO_CCCR_INT_ENABLE, enable);
+	}
+	fBus->ReleaseBus();
+	if (status != B_OK)
+		SDIO_ERROR("reset: card did not come back: %s\n", strerror(status));
+	else
+		dprintf("sdio: card reset and enumerated again\n");
+	return status;
+}
+
+
 status_t
 SdioCard::Abort(uint8 function)
 {
