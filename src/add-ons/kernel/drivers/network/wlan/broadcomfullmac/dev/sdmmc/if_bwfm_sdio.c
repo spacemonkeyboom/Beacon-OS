@@ -157,6 +157,8 @@ static status_t	 bwfm_sdio_poller(void *);
 static int	 bwfm_sdio_chip_setup(struct bwfm_sdio_softc *);
 static status_t	 bwfm_sdio_restart_thread(void *);
 static void	 bwfm_sdio_check_dead(struct bwfm_sdio_softc *);
+static int	 bwfm_sdio_debug_restart(int, char **);
+static struct bwfm_sdio_softc *sBwfmSdioDebug;	/* Beacon: KDL command */
 void		 bwfm_init(struct ifnet *);
 void		 bwfm_chip_detach(struct bwfm_softc *);
 int		 bwfm_sdio_load_microcode(struct bwfm_sdio_softc *,
@@ -406,6 +408,11 @@ bwfm_sdio_attach(struct device *parent, struct device *self, void *aux)
 #ifdef __HAIKU__
 	/* bwfm_attachhook() runs after the caller dropped the bus lock */
 	sc->sc_attach_done = 1;
+	if (sBwfmSdioDebug == NULL) {
+		sBwfmSdioDebug = sc;
+		add_debugger_command("bwfm_restart", bwfm_sdio_debug_restart,
+		    "restart the SDIO Wi-Fi chip (tests the recovery path)");
+	}
 #else
 	config_mountroot(self, bwfm_attachhook);
 #endif
@@ -826,6 +833,22 @@ bwfm_sdio_poller(void *arg)
  * (bwfm_init() with sc_initialized cleared) and let net80211 rejoin.
  * At most once a minute; give up after 5 failures in a row.
  */
+/* Beacon: "bwfm_restart" in the kernel debugger asks for a chip restart,
+ * to test the recovery path on demand. */
+static int
+bwfm_sdio_debug_restart(int argc, char **argv)
+{
+	if (sBwfmSdioDebug == NULL) {
+		kprintf("bwfm: no SDIO Wi-Fi chip attached\n");
+		return 0;
+	}
+	sBwfmSdioDebug->sc_sc.sc_restart_wanted = 1;
+	sBwfmSdioDebug->sc_last_restart = 0;
+	sBwfmSdioDebug->sc_restart_failures = 0;
+	kprintf("bwfm: chip restart requested; it runs after 'continue'\n");
+	return 0;
+}
+
 static void
 bwfm_sdio_check_dead(struct bwfm_sdio_softc *sc)
 {
@@ -1000,6 +1023,10 @@ bwfm_sdio_detach(struct device *self, int flags)
 {
 	struct bwfm_sdio_softc *sc = (struct bwfm_sdio_softc *)self;
 
+	if (sBwfmSdioDebug == sc) {
+		remove_debugger_command("bwfm_restart", bwfm_sdio_debug_restart);
+		sBwfmSdioDebug = NULL;
+	}
 	if (sc->sc_poll_on) {
 		status_t result;
 		sc->sc_poll_on = 0;
