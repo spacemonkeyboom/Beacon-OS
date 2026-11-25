@@ -366,5 +366,8 @@ Only a power cycle helped. Recovery now does what a power cycle does:
   resets the card, redoes the chip setup (split out of attach as
   `bwfm_sdio_chip_setup()`), clears `sc_initialized` and calls `bwfm_init()`,
   which reloads the firmware and rejoins. At most once a minute, gives up
-  after 5 failures in a row. Heavy packet loss without errors is not yet
+  after 5 failures in a row. rv66 test: the wedge seen was a trickle (~18 IF
+  events and 3-5 aborted scans a minute), far under the storm threshold, so
+  rv67 also restarts after 8 aborted scans (SCAN -> INIT) in a row with the
+  interface up. Heavy packet loss without errors is not yet
   detected.
