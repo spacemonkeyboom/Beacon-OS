@@ -3139,6 +3139,21 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	s = splnet();
 
+#ifdef __HAIKU__
+	/* Beacon: a wedged chip aborts every scan (SCAN -> INIT, a trickle of
+	 * IF events, never a join). 8 in a row with the interface up asks the
+	 * bus driver to restart the chip. A join resets the count. */
+	if (nstate == IEEE80211_S_RUN)
+		sc->sc_failed_scans = 0;
+	else if (nstate == IEEE80211_S_INIT && ic->ic_state == IEEE80211_S_SCAN
+	    && (ifp->if_flags & IFF_UP) != 0
+	    && ++sc->sc_failed_scans >= 8) {
+		printf("%s: %u scans in a row aborted, restarting the chip\n",
+		    DEVNAME(sc), sc->sc_failed_scans);
+		sc->sc_failed_scans = 0;
+		sc->sc_restart_wanted = 1;
+	}
+#endif
 	switch (nstate) {
 	case IEEE80211_S_INIT:
 		if (ic->ic_state == IEEE80211_S_SCAN)
