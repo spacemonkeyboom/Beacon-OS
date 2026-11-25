@@ -280,3 +280,15 @@ assembly in `configure.in` to x86 (riscv64 uses the C atomics). Patch:
 `beacon-nspr-4.39-riscv64.patch` (to be added under docs/beacon/qt5 with the
 Falkon work). NSS cross-builds with a host `nsinstall` and `CROSS_COMPILE=1`
 (no shlibsign/FIPS .chk files, as distros do).
+
+## SSH dead after first boot: zero-filled host keys
+
+*Confirmed cause (rv62, 2026-11-25); fix pending test.* `sshd` refused to
+start ("unable to load host key: error in libcrypto"). All six key files had
+their right sizes but held only zero bytes, dated 1970. They were made on the
+first boot, before the clock was set; power was then cut (restart hangs on
+this board, see the PMIC entry) before their data reached the disk, while BFS
+had already journaled the sizes. `ssh-keygen -A` only makes missing keys, so
+SSH stayed broken. Fix (`data/beacon/beacon-sshd`): test every host key with
+`ssh-keygen -y`, move unreadable ones aside as `*.bad`, regenerate, `sync`.
+Lesson for other first-boot writers: `sync` after writing anything vital.

@@ -1,9 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # Beacon: start sshd from net_server's services. Waits up to a minute for the
-# host keys OpenSSH's post-install script makes, creates them if they are still
-# missing, and gives sshd a
-# PID file path that exists. Does nothing if OpenSSH is not installed.
+# host keys OpenSSH's post-install script makes, replaces unreadable ones,
+# creates any still missing, and gives sshd a PID file path that exists. Does nothing if OpenSSH is not installed.
 sshd=/boot/system/bin/sshd
 [ -x "$sshd" ] || exit 0
 keys=/boot/system/settings/ssh
@@ -12,8 +11,19 @@ while [ ! -f "$keys/ssh_host_ed25519_key" ] && [ $i -lt 30 ]; do
 	sleep 2
 	i=$((i + 1))
 done
+# Keys that exist but cannot be read back are replaced: on rv62 all of them
+# were zero-filled, because power was cut before the first-boot key files'
+# data reached the disk (BFS had already journaled their sizes), and
+# "ssh-keygen -A" only creates missing keys. The bad ones are kept as *.bad.
+for k in "$keys"/ssh_host_*_key; do
+	[ -f "$k" ] || continue
+	/boot/system/bin/ssh-keygen -y -f "$k" > /dev/null 2>&1 && continue
+	mv -f "$k" "$k.bad"
+	mv -f "$k.pub" "$k.pub.bad" 2>/dev/null
+done
 # OpenSSH's first-boot key script does not always run (seen on rv53);
 # make any missing host keys ourselves rather than wait forever.
-[ -f "$keys/ssh_host_ed25519_key" ] || /boot/system/bin/ssh-keygen -A
+/boot/system/bin/ssh-keygen -A
+sync
 mkdir -p /boot/system/var/run
 exec "$sshd" -D -o PidFile=/boot/system/var/run/sshd.pid
