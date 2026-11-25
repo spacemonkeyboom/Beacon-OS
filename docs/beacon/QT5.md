@@ -5,7 +5,11 @@
 A test app opened a Qt window ("Qt5 on Beacon") and made an HTTPS request
 through `QNetworkAccessManager` (HTTP 200). HaikuPorts has no Qt for riscv64,
 so as far as we know this is the first Qt build for Haiku riscv64.
-This is step 1 toward Falkon (Qt 5 + QtWebEngine 5.15).
+This was the first step toward a Chromium-engine browser. *Change of plan
+(2026-11-25):* Beacon will build its **own browser on Qt 6 WebEngine**
+rather than port Falkon on QtWebEngine 5.15. Qt 6 WebEngine carries a much
+newer Chromium, whose V8 supports RISC-V upstream, so no old-V8 backport is
+needed and security updates are easier.
 
 ## What's built
 
@@ -49,8 +53,9 @@ zstd). HTTPS needs CA certificates in `/system/data/ssl/`.
 
 ## Next
 
-QtWebEngine 5.15 (Chromium with HaikuPorts' Haiku patches), which needs a
-RISC-V backend for its older V8; then Falkon. Qt 6 later.
+Qt 6 (qtbase, qtdeclarative, qtwebchannel), then QtWebEngine 6 with Haiku
+patches, then Beacon's own browser. Qt 5's OpenGL (Mesa softpipe), QML and
+NSS/NSPR builds are kept as stepping stones and for Qt 5 apps.
 
 ## Credits
 

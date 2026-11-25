@@ -278,8 +278,7 @@ notify late listeners at once.
 *Built (2026-11-25), not yet run.* HaikuPorts' NSPR patches have no riscv64
 case: add riscv64 to the two Haiku headers and restrict the x86 atomics
 assembly in `configure.in` to x86 (riscv64 uses the C atomics). Patch:
-`beacon-nspr-4.39-riscv64.patch` (to be added under docs/beacon/qt5 with the
-Falkon work). NSS cross-builds with a host `nsinstall` and `CROSS_COMPILE=1`
+`beacon-nspr-4.39-riscv64.patch` (in docs/beacon/qt5). NSS cross-builds with a host `nsinstall` and `CROSS_COMPILE=1`
 (no shlibsign/FIPS .chk files, as distros do).
 
 ## SSH dead after first boot: zero-filled host keys

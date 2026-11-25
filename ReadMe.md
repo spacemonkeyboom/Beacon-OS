@@ -62,7 +62,9 @@ Beacon 0.2:
 | Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
 | Web browser: WebPositive (HaikuWebKit 1.10.0, HTTPS) | Works (0.4.1); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
-| Vulkan, Qt + Falkon | Planned next |
+| Qt 5 (Core, Gui, Widgets, Network) | Runs on the board (test app); see [QT5.md](docs/beacon/QT5.md) |
+| Beacon's own Chromium-engine browser (Qt 6 WebEngine) | In progress: Qt 6, then QtWebEngine 6, then the browser |
+| OpenGL (Mesa, software) and Vulkan | OpenGL built, testing; Vulkan planned |
 
 **For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
 lists the bugs and hardware quirks we found (RISC-V TLB faults, VL805 USB,
