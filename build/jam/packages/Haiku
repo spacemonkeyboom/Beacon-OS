@@ -294,8 +294,10 @@ SEARCH on beacon-wallpaper.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
 SEARCH on beacon-wallpaper-2.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
 SEARCH on beacon-wallpaper-3.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
 SEARCH on beacon-wallpaper-4.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
+SEARCH on beacon-wallpaper-5.bmp = [ FDirName $(HAIKU_TOP) data artwork beacon ] ;
 AddFilesToPackage data artwork : beacon-wallpaper.bmp beacon-wallpaper-2.bmp
-	beacon-wallpaper-3.bmp beacon-wallpaper-4.bmp ;
+	beacon-wallpaper-3.bmp beacon-wallpaper-4.bmp
+	beacon-wallpaper-5.bmp ;
 # Beacon: test tone for the media kit (3 s, 440 Hz, 16-bit stereo .au)
 SEARCH on beacon-test-tone.au = [ FDirName $(HAIKU_TOP) data sounds beacon ] ;
 AddFilesToPackage data sounds : beacon-test-tone.au ;
