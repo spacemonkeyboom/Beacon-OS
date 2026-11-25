@@ -174,7 +174,10 @@ rule RemotePackageRepository repository : architecture : repositoryUrl
 		: $(repositoriesDir) ;
 	# Use a locally created dummy repository if downloads have been disabled.
 	# This is useful when trying to build everything locally from source.
-	if $(HAIKU_NO_DOWNLOADS) = 1 {
+	# Beacon: riscv64 adds packages that are not in the upstream
+	# build-packages snapshot (haikuwebkit and its dependencies), so no
+	# matching repo file exists upstream; build it from the local files.
+	if $(HAIKU_NO_DOWNLOADS) = 1 || $(architecture) = riscv64 {
 		# build repository file
 		local packageFileNames = [
 			on $(packageListFile) return $(HAIKU_REPOSITORY_PACKAGE_FILE_NAMES)
@@ -182,6 +185,13 @@ rule RemotePackageRepository repository : architecture : repositoryUrl
 		local packageFiles ;
 		local packageFile ;
 		for packageFile in $(packageFileNames) {
+			# Beacon: our own builds (vendor "Beacon") are not HaikuPorts
+			# packages; keep them out of its index. They reach the image as
+			# plain package files (DefaultBuildProfiles).
+			if $(architecture) = riscv64
+				&& [ Match "^(haikuwebkit)" : $(packageFile) ] {
+				continue ;
+			}
 			MakeLocate $(packageFile) : $(HAIKU_DOWNLOAD_DIR) ;
 			packageFiles += $(packageFile) ;
 		}

@@ -179,3 +179,16 @@ background is a JPEG). We ship BMP wallpapers until it is fixed.
   `src/add-ons/kernel/drivers/audio/pwmdac_jh7110/README.md` and
   `HDMI_AUDIO_PLAN.md`. Known: timer feeder sometimes runs up to 30 ms late
   (audible pops); DMA is the planned fix.
+
+## Web browser
+
+### HaikuWebKit 1.10.0 + WebPositive on riscv64 — confirmed
+WebPositive runs on the Orange Pi RV (C_LOOP JavaScript, no JIT/Wasm/WebGL).
+Full write-up, patch and package definitions: [WEBKIT.md](WEBKIT.md). Key
+points for other ports: Haiku riscv64 `MachineContext.h` mapping (`vregs
+x[n-1]` = xn, then `pc`); `PlatformEnable.h` forces WebAssembly on riscv64
+even with C_LOOP; plain `-I/system/...` paths are not sysroot-relative when
+cross-compiling; GL/EGL must be optional without Mesa. Haiku's riscv64
+build-packages snapshot is too old for WebKit's dependencies; the image
+builder needs a locally generated HaikuPorts index (`RepositoryRules`) and
+rejects packages whose vendor is not "Haiku Project" in that index.

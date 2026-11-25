@@ -128,8 +128,18 @@ rule DefineDefaultBuildProfiles
 			AddOptionalHaikuImagePackages BeBook Development Git Welcome ;
 
 			# WebPositive can only built for x86_gcc2, x86 and x86_64
-			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 {
+			# Beacon: and riscv64, with our haikuwebkit (docs/beacon/WEBKIT.md)
+			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 riscv64 {
 				AddOptionalHaikuImagePackages WebPositive ;
+				if $(TARGET_ARCH) = riscv64 {
+					# haikuwebkit is Beacon's build, not a HaikuPorts package
+					local webkitPkg = <beacon-pkg>haikuwebkit-1.10.0-1-riscv64.hpkg ;
+					SEARCH on $(webkitPkg) = $(HAIKU_DOWNLOAD_DIR) ;
+					AddPackageFilesToHaikuImage system packages : $(webkitPkg) ;
+					AddHaikuImageSystemPackages brotli libexecinfo
+						libidn2 libpsl libunistring libxml2 libxslt sqlite woff2
+						libiconv readline ncurses6 zlib ;
+				}
 			} else {
 				Echo "WebPositive not available on $(HAIKU_PACKAGING_ARCHS)" ;
 			}
@@ -144,7 +154,7 @@ rule DefineDefaultBuildProfiles
 			AddUserToHaikuImage sshd : 1 : 101 : /var/empty : /bin/true
 				: "SSH privilege separation" ;
 			HAIKU_IMAGE_HOST_NAME ?= shredder ;
-			HAIKU_IMAGE_SIZE ?= 1100 ;	# Beacon: room for gcc + headers
+			HAIKU_IMAGE_SIZE ?= 1400 ;	# Beacon: room for gcc + headers + WebKit
 			if $(DEBUG) != 0 {
 				HAIKU_IMAGE_SIZE ?= 850 ;
 			}
@@ -194,8 +204,18 @@ rule DefineDefaultBuildProfiles
 			AddOptionalHaikuImagePackages Development Git ;
 
 			# WebPositive can only built for x86_gcc2, x86 and x86_64
-			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 {
+			# Beacon: and riscv64, with our haikuwebkit (docs/beacon/WEBKIT.md)
+			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 riscv64 {
 				AddOptionalHaikuImagePackages WebPositive ;
+				if $(TARGET_ARCH) = riscv64 {
+					# haikuwebkit is Beacon's build, not a HaikuPorts package
+					local webkitPkg = <beacon-pkg>haikuwebkit-1.10.0-1-riscv64.hpkg ;
+					SEARCH on $(webkitPkg) = $(HAIKU_DOWNLOAD_DIR) ;
+					AddPackageFilesToHaikuImage system packages : $(webkitPkg) ;
+					AddHaikuImageSystemPackages brotli libexecinfo
+						libidn2 libpsl libunistring libxml2 libxslt sqlite woff2
+						libiconv readline ncurses6 zlib ;
+				}
 			} else {
 				Echo "WebPositive not available on $(HAIKU_PACKAGING_ARCHS)" ;
 			}

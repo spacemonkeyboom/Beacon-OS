@@ -1,0 +1,195 @@
+--- a/Source/JavaScriptCore/runtime/MachineContext.h
++++ b/Source/JavaScriptCore/runtime/MachineContext.h
+@@ -152,6 +152,8 @@
+ #elif OS(HAIKU)
+ #if CPU(X86_64)
+     return reinterpret_cast<void*&>(machineContext.rsp);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>(machineContext.x[1]);
+ #else
+ #error Unknown Architecture
+ #endif
+@@ -281,6 +283,8 @@
+ #elif OS(HAIKU)
+ #if CPU(X86_64)
+     return reinterpret_cast<void*&>(machineContext.rbp);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>(machineContext.x[7]);
+ #else
+ #error Unknown Architecture
+ #endif
+@@ -441,6 +445,8 @@
+ #elif OS(HAIKU)
+ #if CPU(X86_64)
+     return reinterpret_cast<void*&>((uintptr_t&) machineContext.rip);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>((uintptr_t&) machineContext.pc);
+ #else
+ #error Unknown Architecture
+ #endif
+@@ -617,6 +623,8 @@
+ #elif OS(HAIKU)
+ #if CPU(X86_64)
+     return reinterpret_cast<void*&>((uintptr_t&) machineContext.rsi);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>((uintptr_t&) machineContext.x[10]);
+ #else
+ #error Unknown Architecture
+ #endif
+@@ -682,6 +690,8 @@
+ #error Unsupported Architecture
+ #elif CPU(X86_64)
+     return reinterpret_cast<void*&>((uintptr_t&) machineContext.rbx);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>((uintptr_t&) machineContext.x[8]);
+ #else
+ #error Unknown Architecture
+ #endif
+@@ -802,6 +812,8 @@
+ #elif OS(HAIKU)
+ #if CPU(X86_64)
+     return reinterpret_cast<void*&>((uintptr_t&) machineContext.r8);
++#elif CPU(RISCV64)
++    return reinterpret_cast<void*&>((uintptr_t&) machineContext.x[13]);
+ #else
+ #error Unknown Architecture
+ #endif
+--- a/Source/cmake/OptionsHaiku.cmake
++++ b/Source/cmake/OptionsHaiku.cmake
+@@ -41,7 +41,8 @@
+ FIND_PACKAGE(JPEG REQUIRED)
+ FIND_PACKAGE(LibXml2 2.8.0 REQUIRED)
+ FIND_PACKAGE(LibXslt 1.1.7 REQUIRED)
+-find_package(OpenGLES2 REQUIRED)
++# Beacon: GL is only used by WebGL; riscv64 has no Mesa yet
++find_package(OpenGLES2)
+ FIND_PACKAGE(PNG REQUIRED)
+ FIND_PACKAGE(SQLite3 REQUIRED)
+ find_package(Threads REQUIRED)
+--- a/Source/WebCore/CMakeLists.txt
++++ b/Source/WebCore/CMakeLists.txt
+@@ -2267,7 +2267,7 @@
+     )
+ elseif (USE_LIBEPOXY)
+     list(APPEND WebCore_LIBRARIES Epoxy::Epoxy)
+-else ()
++elseif (TARGET OpenGL::GLES) # Beacon: no GL on Haiku riscv64 (no Mesa) yet
+     list(APPEND WebCore_LIBRARIES OpenGL::GLES)
+ 
+     list(APPEND WebCore_SYSTEM_INCLUDE_DIRECTORIES
+--- a/Source/JavaScriptCore/llint/InPlaceInterpreter.asm
++++ b/Source/JavaScriptCore/llint/InPlaceInterpreter.asm
+@@ -1285,7 +1285,13 @@
+     btpz r0, .continue
+     jmp _wasm_throw_from_slow_path_trampoline
+ .continue:
++# Beacon: nextIPIntInstruction only exists where InPlaceInterpreter64 is
++# included (below); other CPUs (e.g. RISCV64) failed the offset extractor.
++if JSVALUE64 and (ARM64 or ARM64E or X86_64)
+     nextIPIntInstruction()
++else
++    break
++end
+ end)
+ 
+ op(wasm_throw_from_slow_path_trampoline, macro ()
+--- a/Source/JavaScriptCore/offlineasm/riscv64.rb
++++ b/Source/JavaScriptCore/offlineasm/riscv64.rb
+@@ -170,9 +170,9 @@
+             'x16'
+         when 't7', 'a7', 'wa7'
+             'x17'
+-        when 'ws0'
++        when 'ws0', 't9' # Beacon: generic LLInt aliases ws0/ws1 to t9/t10
+             'x6'
+-        when 'ws1'
++        when 'ws1', 't10'
+             'x7'
+         when 'csr0'
+             'x9'
+@@ -600,7 +600,7 @@
+         case riscv64OperandTypes(node.operands)
+         when [RegisterID]
+             callOpcode = "jalr"
+-        when [LabelReference]
++        when [LabelReference], [LocalLabelReference] # Beacon: lowerRISCV64 accepts both
+             callOpcode = "call"
+         else
+             riscv64RaiseMismatchedOperands(node.operands)
+--- a/Source/WTF/wtf/PlatformEnable.h
++++ b/Source/WTF/wtf/PlatformEnable.h
+@@ -730,7 +730,9 @@
+ #define ENABLE_JIT 0
+ #endif
+ 
+-#if CPU(RISCV64)
++/* Beacon: only force WebAssembly (IPInt) on RISCV64 when the asm LLInt is
++   used; the C_LOOP interpreter has no Wasm support. */
++#if CPU(RISCV64) && !ENABLE(C_LOOP)
+ #undef ENABLE_WEBASSEMBLY
+ #define ENABLE_WEBASSEMBLY 1
+ #undef ENABLE_WEBASSEMBLY_OMGJIT
+--- a/Source/WebCore/PlatformHaiku.cmake
++++ b/Source/WebCore/PlatformHaiku.cmake
+@@ -49,7 +49,8 @@
+ 
+ list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
+     ${WEBCORE_DIR}/platform/video-codecs
+-    /system/develop/headers/private/netservices
++    # Beacon: under the sysroot when cross-compiling (/system is /boot/system on Haiku)
++    ${CMAKE_SYSROOT}/boot/system/develop/headers/private/netservices
+ )
+ 
+ list(APPEND WebCore_INCLUDE_DIRECTORIES
+@@ -110,7 +111,7 @@
+ 
+   platform/image-decoders/haiku/ImageDecoderHaiku.cpp
+ 
+-  platform/graphics/PlatformDisplay.cpp
++  # Beacon: PlatformDisplay.cpp is added below only when GL/EGL exists
+   platform/graphics/WOFFFileFormat.cpp
+ 
+   platform/graphics/haiku/AffineTransformHaiku.cpp
+@@ -162,6 +163,12 @@
+   inspector/LegacyWebSocketInspectorInstrumentation.cpp
+ )
+ 
++# Beacon: PlatformDisplay is EGL-only and nothing in the Haiku port calls it;
++# riscv64 has no Mesa/EGL yet, so build it only when GLES was found.
++if (TARGET OpenGL::GLES)
++    list(APPEND WebCore_SOURCES platform/graphics/PlatformDisplay.cpp)
++endif ()
++
+ if (ENABLE_WEB_AUDIO)
+     list(APPEND WebCore_SOURCES
+ 		platform/audio/haiku/AudioBusHaiku.cpp
+--- a/Source/WebKitLegacy/PlatformHaiku.cmake
++++ b/Source/WebKitLegacy/PlatformHaiku.cmake
+@@ -24,7 +24,8 @@
+     "${SQLITE_INCLUDE_DIR}"
+     "${CMAKE_BINARY_DIR}"
+     "${FORWARDING_HEADERS_DIR}"
+-    /system/develop/headers/private/netservices
++    # Beacon: under the sysroot when cross-compiling (/system is /boot/system on Haiku)
++    ${CMAKE_SYSROOT}/boot/system/develop/headers/private/netservices
+ )
+ 
+ # These folders have includes with the same name as Haiku system ones. So we
+@@ -108,10 +109,16 @@
+     ${PNG_LIBRARY}
+     ${JPEG_LIBRARY}
+     ${CMAKE_DL_LIBS}
+-    be bnetapi GL shared translation tracker
++    # Beacon: GL moved below; riscv64 has no libGL (no Mesa) yet
++    be bnetapi shared translation tracker
+     WebCore PAL WTF
+ )
+ 
++# Beacon: link Haiku's libGL only where GL/GLES was found
++if (TARGET OpenGL::GLES)
++    list(APPEND WebKitLegacy_LIBRARIES GL)
++endif ()
++
+ INSTALL(FILES
+     haiku/API/WebWindow.h
+     haiku/API/WebViewConstants.h

@@ -1,0 +1,18 @@
+name			haikuwebkit_devel
+version			1.10.0-1
+architecture	riscv64
+summary			"Development files for haikuwebkit (riscv64)"
+description		"HaikuWebKit 1.10.0, the WebKit engine used by WebPositive, cross-built for riscv64 by the Beacon project. JavaScript runs on the portable C_LOOP interpreter (no JIT yet); WebAssembly and WebGL are off. Patches: PATCHES.md at https://github.com/spacemonkeyboom/Beacon-OS."
+packager		"Beacon <https://github.com/spacemonkeyboom/Beacon-OS>"
+vendor			"Beacon"
+copyrights		{ "1997-2025 The WebKit Contributors" "2009-2025 Haiku, Inc." }
+licenses		{ "GNU LGPL v2" "BSD (2-clause)" }
+urls			{ "https://codeberg.org/haiku/haikuwebkit" "https://github.com/spacemonkeyboom/Beacon-OS" }
+provides {
+	haikuwebkit_devel = 1.10.0
+	devel:libWebKitLegacy = 1.10.0 compat >= 1
+	devel:libJavaScriptCore = 18.7.4 compat >= 18
+}
+requires {
+	haikuwebkit == 1.10.0-1 base
+}

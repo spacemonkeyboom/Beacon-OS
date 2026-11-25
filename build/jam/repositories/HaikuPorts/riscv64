@@ -4,6 +4,7 @@ RemotePackageRepository HaikuPorts
 	:
 	# architecture "any" packages
 	be_book-2008_10_26-7
+	file_data-5.43-2	# Beacon: arch "any" (was listed as riscv64)
 	ca_root_certificates-2024_07_02-1
 	haikuporter-1.2.9-1
 	intel_wifi_firmwares-2023_03_06-1
@@ -16,6 +17,20 @@ RemotePackageRepository HaikuPorts
 	:
 	# repository architecture packages
 	# primary architecture (riscv64)
+	# Beacon: not in the build-packages snapshot; local files in
+	# generated/download (current HaikuPorts riscv64, checksums verified;
+	# haikuwebkit built by Beacon, see docs/beacon/WEBKIT.md)
+	brotli-1.2.0-1
+	haikuwebkit-1.10.0-1
+	haikuwebkit_devel-1.10.0-1
+	libexecinfo-1.1-6
+	libidn2-2.0.5-4
+	libpsl-0.21.5-1
+	libunistring-1.5-1
+	libxml2-2.15.3-1
+	libxslt-1.1.45-2
+	sqlite-3.53.4.0-1
+	woff2-1.0.2-3
 	autoconf-2.71-1
 	automake-1.16.5-1
 	bash-5.2.026-2
@@ -36,7 +51,6 @@ RemotePackageRepository HaikuPorts
 	ffmpeg-4.3-2
 	findutils-4.6.0-1
 	file-5.43-1
-	file_data-5.43-2
 	flex-2.5.35-1
 	fluidlite_devel-1.0.9-3
 	fluidlite-1.0.9-3
@@ -68,7 +82,7 @@ RemotePackageRepository HaikuPorts
 	libedit-20210419_3.1-1
 	libicns_devel-0.8.1-8
 	libicns-0.8.1-8
-	libiconv-1.16-1
+	libiconv-1.19.1-1	# Beacon: newer, for haikuwebkit
 	libjpeg_turbo_devel-2.1.3-1
 	libjpeg_turbo-2.1.3-1
 	libpcap-1.8.1-4
@@ -94,8 +108,8 @@ RemotePackageRepository HaikuPorts
 	mpfr_devel-4.2.0-3
 	mpfr-4.2.0-3
 	nano-6.2-1
-	ncurses6_devel-6.3-1
-	ncurses6-6.3-1
+	ncurses6_devel-6.6-1	# Beacon: newer, for haikuwebkit
+	ncurses6-6.6-1	# Beacon: newer, for haikuwebkit
 	netcat-1.10-4
 	nghttp2_devel-1.59.0-1
 	nghttp2-1.59.0-1
@@ -109,7 +123,7 @@ RemotePackageRepository HaikuPorts
 	pe-2.4.5-9
 	perl-5.40.0-3
 	pkgconfig-0.29.2-4
-	readline-8.2.001-1
+	readline-8.3.006-2	# Beacon: newer, for haikuwebkit
 	sed-4.2.1-1
 	tar-1.34-1
 	tcpdump-4.99.1-1
@@ -122,8 +136,8 @@ RemotePackageRepository HaikuPorts
 	xz_utils_devel-5.6.1-1
 	xz_utils-5.6.1-1
 	zip-3.0-4
-	zlib_devel-1.2.11-1
-	zlib-1.2.11-1
+	zlib_devel-1.3.2-1	# Beacon: newer, for haikuwebkit
+	zlib-1.3.2-1	# Beacon: newer, for haikuwebkit
 	zstd_devel-1.5.7-1
 	zstd-1.5.7-1
 	:
