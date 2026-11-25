@@ -24,6 +24,7 @@ public:
 	virtual						~TimeApplication();
 
 	virtual void				ReadyToRun();
+			void				SelectTimeZoneTab();
 	virtual void				AboutRequested();
 
 	virtual void				MessageReceived(BMessage* message);

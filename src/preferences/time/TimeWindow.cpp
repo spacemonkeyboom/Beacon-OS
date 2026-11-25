@@ -108,6 +108,11 @@ TTimeWindow::MessageReceived(BMessage* message)
 			fTabView->Select(fTabView->CountTabs() - 1);
 			break;
 
+		case kSelectTimeZoneTab:
+			// Beacon: first-sync time zone choice
+			fTabView->Select(1);
+			break;
+
 		case kShowHideTime:
 			fClockView->MessageReceived(message);
 			break;

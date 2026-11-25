@@ -51,6 +51,13 @@ TimeApplication::~TimeApplication()
 
 
 void
+TimeApplication::SelectTimeZoneTab()
+{
+	fWindow->PostMessage(kSelectTimeZoneTab);
+}
+
+
+void
 TimeApplication::ReadyToRun()
 {
 	fWindow->Show();
@@ -101,9 +108,6 @@ int
 main(int argc, char** argv)
 {
 	if (argc > 1) {
-		if (strcmp(argv[1], "--setup-timezone") == 0)
-			return run_time_zone_setup();
-
 		bool bootUpdate = strcmp(argv[1], "--boot-update") == 0;
 		if (strcmp(argv[1], "--update") != 0 && !bootUpdate) {
 			fprintf(stderr, "Usage: %s [--update]\n", argv[0]);
@@ -114,21 +118,28 @@ main(int argc, char** argv)
 		Settings settings;
 		// Beacon: the boot job runs by default (the board has no
 		// battery-backed clock); skip it only if the user turned it off.
-		if (bootUpdate && !settings.GetSynchronizeAtBoot())
+		if (bootUpdate && !settings.GetSynchronizeAtBoot()
+			&& time_zone_asked())
 			return 0;
 
+		// Sync unless only the first time zone choice is left to do.
+		bool doSync = !bootUpdate || settings.GetSynchronizeAtBoot();
 		const char* errorString = NULL;
 		int32 errorCode = 0;
-		status_t status = update_time(settings, &errorString, &errorCode);
+		status_t status = B_OK;
+		if (doSync)
+			status = update_time(settings, &errorString, &errorCode);
 		// Wi-Fi and DNS may need a moment after "network available".
-		for (int32 attempt = 1; bootUpdate && status != B_OK && attempt < 12;
-				attempt++) {
+		for (int32 attempt = 1; doSync && bootUpdate && status != B_OK
+				&& attempt < 12; attempt++) {
 			snooze(10000000);
 			errorString = NULL;
 			errorCode = 0;
 			status = update_time(settings, &errorString, &errorCode);
 		}
-		if (status == B_OK) {
+		if (!doSync) {
+			// nothing to report
+		} else if (status == B_OK) {
 			printf("Synchronization successful\n");
 		} else if (errorCode != 0) {
 			printf("The following error occurred "
@@ -137,6 +148,16 @@ main(int argc, char** argv)
 		} else {
 			printf("The following error occurred while synchronizing:\n%s\n",
 				errorString);
+		}
+
+		// Beacon: after the first network time sync (New York by default),
+		// open Time preferences on the Time zone tab, once.
+		if (bootUpdate && !time_zone_asked()) {
+			mark_time_zone_asked();
+			setlocale(LC_ALL, "");
+			TimeApplication app;
+			app.SelectTimeZoneTab();
+			app.Run();
 		}
 	} else {
 		setlocale(LC_ALL, "");

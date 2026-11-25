@@ -66,6 +66,8 @@ const uint32 kGetClockSettings = 'GCkS';
 
 // bring the clock tab to front
 const uint32 kSelectClockTab = 'SlCk';
+// Beacon: show the Time zone tab (first network time sync)
+const uint32 kSelectTimeZoneTab = 'SlTz';
 
 #endif	// _TIME_MESSAGES_H
 
