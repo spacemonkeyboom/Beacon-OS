@@ -19,6 +19,8 @@
 
 #include "arch_traps.h"
 #include "efi_platform.h"
+
+extern "C" void beacon_flush_display_range(addr_t start, size_t size);
 #include "generic_mmu.h"
 #include "mmu.h"
 #include "serial.h"
@@ -244,6 +246,11 @@ arch_start_kernel(addr_t kernelEntry)
 	if (gKernelArgs.arch_args.ccache.size != 0)
 		beacon_display_snapshot();
 #endif
+	// Beacon: last chance to push firmware-written (cached) frame buffer
+	// lines out of L2 before the kernel draws through the uncached alias.
+	if (gKernelArgs.frame_buffer.enabled)
+		beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,
+			gKernelArgs.frame_buffer.physical_buffer.size);
 	dprintf("Calling ExitBootServices. So long, EFI!\n");
 	serial_disable();
 

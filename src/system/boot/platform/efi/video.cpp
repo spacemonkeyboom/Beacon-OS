@@ -215,6 +215,14 @@ beacon_draw_riscv_screen(void)
 		|| height < kRiscvLogoHeight)
 		return;
 
+	// U-Boot drew its logo through the cached memory port, so the L2 cache
+	// may still hold dirty lines of the frame buffer. Drawing through the
+	// uncached alias goes straight to DDR, and a later eviction of those
+	// lines would write U-Boot's old pixels over ours (static during the
+	// boot splash). Push them out first.
+	beacon_flush_display_range((addr_t)sGraphicsOutput->Mode->FrameBufferBase,
+		(size_t)stride * height * sizeof(uint32));
+
 	auto pack = [bgr](const uint8* rgb) -> uint32 {
 		return bgr ? ((uint32)rgb[0] << 16 | (uint32)rgb[1] << 8 | rgb[2])
 			: ((uint32)rgb[2] << 16 | (uint32)rgb[1] << 8 | rgb[0]);
@@ -364,6 +372,12 @@ platform_switch_to_logo(void)
 	gKernelArgs.frame_buffer.bytes_per_row = sGraphicsOutput->Mode->Info->PixelsPerScanLine
 			* ((depth + 7) / 8);
 
+#ifdef __riscv
+	// See beacon_draw_riscv_screen(): no dirty cached lines may linger over
+	// the frame buffer once we draw through the uncached alias.
+	beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,
+		gKernelArgs.frame_buffer.physical_buffer.size);
+#endif
 	video_display_splash(gKernelArgs.frame_buffer.physical_buffer.start);
 #ifdef __riscv
 	beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,

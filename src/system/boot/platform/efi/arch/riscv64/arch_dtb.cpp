@@ -180,9 +180,10 @@ beacon_flush_display_range(addr_t start, size_t size)
 {
 	if (!sNonCoherentDisplaySoC || sCcache.size == 0 || size == 0)
 		return;
-	// Drawing through the uncached alias needs no flush.
+	// Flush64 takes the cached (memory port) address; map an uncached-alias
+	// address back to it.
 	if (gFrameBufferAliasOffset != 0 && start >= gFrameBufferAliasOffset)
-		return;
+		start -= gFrameBufferAliasOffset;
 
 	const size_t kLineSize = 64;
 	const size_t kFlush64 = 0x200;
