@@ -1,0 +1,296 @@
+Beacon patch for Qt 5.15.19 on Haiku riscv64 (cross-build), v2: qthaikuplugins also builds with OpenGL.
+Part 1 applies to qtbase (KDE commit fbed962c3195ab3952fa54d40e012ad1a4fdc42b) after the
+HaikuPorts qtbase-5.15.19.patchset; part 2 applies to qthaikuplugins 8af8224255962a707d8c6d87d8f5082824b1d819.
+Apply with "patch -p1" from the directory that holds qtbase/ and qthaikuplugins/.
+
+diff --git a/qtbase/mkspecs/haiku-riscv64-cross-g++/qmake.conf b/qtbase/mkspecs/haiku-riscv64-cross-g++/qmake.conf
+new file mode 100644
+index 00000000..2fd48234
+--- /dev/null
++++ b/qtbase/mkspecs/haiku-riscv64-cross-g++/qmake.conf
+@@ -0,0 +1,38 @@
++#
++# qmake configuration for cross-compiling to Haiku riscv64 (Beacon)
++# with Haiku's riscv64-unknown-haiku- cross tools (gcc 13). Use with
++# -xplatform haiku-riscv64-cross-g++ -sysroot <Haiku sysroot>.
++#
++
++MAKEFILE_GENERATOR      = UNIX
++QMAKE_PLATFORM          = haiku
++
++include(../common/unix.conf)
++
++# Beacon: the cross gcc spec links only static libgcc; C++ exception
++# unwinding (_Unwind_Resume) lives in libgcc_s, as on native Haiku.
++QMAKE_LIBS              = -lgcc_s
++QMAKE_INCDIR            =
++QMAKE_LIBDIR            =
++QMAKE_LIBS_NETWORK      = -lnetwork
++QMAKE_LIBS_OPENGL       = -lGL
++QMAKE_LIBS_OPENGL_QT    = -lGL
++
++include(../common/gcc-base-unix.conf)
++include(../common/g++-unix.conf)
++
++isEmpty(CROSS_COMPILE): CROSS_COMPILE = riscv64-unknown-haiku-
++
++QMAKE_CC                = $${CROSS_COMPILE}gcc
++QMAKE_CXX               = $${CROSS_COMPILE}g++
++QMAKE_LINK              = $${CROSS_COMPILE}g++
++QMAKE_LINK_SHLIB        = $${CROSS_COMPILE}g++
++QMAKE_LINK_C            = $${CROSS_COMPILE}gcc
++QMAKE_LINK_C_SHLIB      = $${CROSS_COMPILE}gcc
++QMAKE_AR                = $${CROSS_COMPILE}ar cqs
++QMAKE_OBJCOPY           = $${CROSS_COMPILE}objcopy
++QMAKE_NM                = $${CROSS_COMPILE}nm -P
++QMAKE_STRIP             = $${CROSS_COMPILE}strip
++QMAKE_RANLIB            =
++
++load(qt_config)
+diff --git a/qtbase/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h b/qtbase/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h
+new file mode 100644
+index 00000000..36fd1bfb
+--- /dev/null
++++ b/qtbase/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h
+@@ -0,0 +1,2 @@
++// Beacon: same platform definitions as the native Haiku mkspec.
++#include "../haiku-g++/qplatformdefs.h"
+diff --git a/qtbase/src/corelib/corelib.pro b/qtbase/src/corelib/corelib.pro
+index 22e37486..c64ce7f1 100644
+--- a/qtbase/src/corelib/corelib.pro
++++ b/qtbase/src/corelib/corelib.pro
+@@ -78,6 +78,11 @@ integrity {
+     LIBS_PRIVATE += -lposix -livfs -lsocket -lnet -lshm_client
+ }
+ 
++# Beacon: qlogging.cpp uses backtrace() when <execinfo.h> exists; on
++# Haiku that comes from the libexecinfo package.
++haiku:exists($$[QT_SYSROOT]/boot/system/develop/headers/execinfo.h): \
++    LIBS_PRIVATE += -lexecinfo
++
+ QMAKE_DYNAMIC_LIST_FILE = $$PWD/QtCore.dynlist
+ 
+ HOST_BINS = $$[QT_HOST_BINS]
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/haiku.pro b/qthaikuplugins/platforms/qhaikuplatform/haiku/haiku.pro
+index cff53bf..ccc2d23 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/haiku.pro
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/haiku.pro
+@@ -8,7 +8,15 @@ QT += \
+ 	eventdispatcher_support-private fontdatabase_support-private \
+ 	theme_support-private
+ 
+-LIBS += -lbe -lroot -ltracker -lgame -lGL -lGLU
++LIBS += -lbe -lroot -ltracker -lgame
++
++# Beacon: OpenGL is optional (no Mesa on Haiku riscv64 yet).
++qtConfig(opengl) {
++	# Beacon: GLU is not used by the plugin.
++	LIBS += -lGL
++	SOURCES += qhaikuglcontext.cpp
++	HEADERS += qhaikuglcontext.h
++}
+ 
+ CONFIG += link_pkgconfig
+ 
+@@ -18,13 +26,12 @@ QMAKE_USE_PRIVATE += freetype
+ 
+ INCLUDEPATH += ../../../3rdparty/simplecrypt/
+ 
+-SOURCES =	main.cpp \
++SOURCES +=	main.cpp \
+ 			qhaikuapplication.cpp \
+ 			qhaikubackingstore.cpp \
+ 			qhaikuclipboard.cpp \
+ 			qhaikucursor.cpp \
+ 			qhaikudrag.cpp \
+-			qhaikuglcontext.cpp \
+ 			qhaikuintegration.cpp \
+ 			qhaikunativeinterface.cpp \
+ 			qhaikuoffscreensurface.cpp \
+@@ -39,12 +46,11 @@ SOURCES =	main.cpp \
+ 			qhaikuwindow.cpp \
+ 			../../../3rdparty/simplecrypt/simplecrypt.cpp
+ 
+-HEADERS =	qhaikuapplication.h \
++HEADERS +=	qhaikuapplication.h \
+ 			qhaikubackingstore.h \
+ 			qhaikuclipboard.h \
+ 			qhaikucursor.h \
+ 			qhaikudrag.h \
+-			qhaikuglcontext.h \
+ 			qhaikuintegration.h \
+ 			qhaikunativeinterface.h \
+ 			qhaikuoffscreensurface.h \
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/osmesa_bgl.h b/qthaikuplugins/platforms/qhaikuplatform/haiku/osmesa_bgl.h
+index 124e294..735d9b1 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/osmesa_bgl.h
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/osmesa_bgl.h
+@@ -35,7 +35,10 @@
+ #define GL_GLEXT_PROTOTYPES 1
+ 
+ #include <GL/gl.h>
++/* Beacon: GLU is not used here; include it only when installed. */
++#if __has_include(<GL/glu.h>)
+ #include <GL/glu.h>
++#endif
+ #include <GL/glext.h>
+ 
+ #ifdef __cplusplus
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.cpp b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.cpp
+index c4dc887..f682d2d 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.cpp
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.cpp
+@@ -133,12 +133,14 @@ void QHaikuBackingStore::flush(QWindow *window, const QRegion &region, const QPo
+ }
+ 
+ 
++#if QT_CONFIG(opengl)
+ void QHaikuBackingStore::composeAndFlush(QWindow *window, const QRegion &region, const QPoint &offset,
+                                        QPlatformTextureList *textures,
+                                        bool translucentBackground)
+ {
+     QPlatformBackingStore::composeAndFlush(window, region, offset, textures, translucentBackground);
+ }
++#endif
+ 
+ 
+ void QHaikuBackingStore::resize(const QSize &size, const QRegion &)
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.h b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.h
+index d6edf54..cfdbc5a 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.h
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikubackingstore.h
+@@ -73,9 +73,11 @@ public:
+     void flush(QWindow *window, const QRegion &region, const QPoint &offset) override;
+     void resize(const QSize &size, const QRegion &staticContents);
+     bool scroll(const QRegion &area, int dx, int dy) override;
++#if QT_CONFIG(opengl)
+     void composeAndFlush(QWindow *window, const QRegion &region, const QPoint &offset,
+                                        QPlatformTextureList *textures,
+                                        bool translucentBackground) override;
++#endif
+ 	QImage toImage() const override { return m_image; }
+ 
+     QPixmap grabWindow(WId window, const QRect &rect) const;
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.cpp b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.cpp
+index b98b5b1..c2c90d7 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.cpp
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.cpp
+@@ -50,12 +50,16 @@
+ 
+ #include <qpa/qplatformfontdatabase.h>
+ #include <qpa/qplatformservices.h>
++#if QT_CONFIG(opengl)
+ #include <qpa/qplatformopenglcontext.h>
++#endif
+ 
+ #include "qhaikuintegration.h"
+ #include "qhaikudrag.h"
+ 
++#if QT_CONFIG(opengl)
+ #include <GLView.h>
++#endif
+ 
+ QT_BEGIN_INCLUDE_NAMESPACE
+ extern char **environ;
+@@ -77,7 +81,11 @@ QHaikuIntegration::QHaikuIntegration(const QStringList &parameters, int &argc, c
+ 	m_clipboard = new QHaikuClipboard();
+ 	m_haikuSystemLocale = new QHaikuSystemLocale;
+ 	m_drag = new QHaikuDrag();
++#if QT_CONFIG(opengl)
+ 	m_openGlEnabled = isOpenGLEnabled();
++#else
++	m_openGlEnabled = false;
++#endif
+ }
+ 
+ QHaikuIntegration::~QHaikuIntegration()
+@@ -328,12 +336,14 @@ QPlatformBackingStore *QHaikuIntegration::createPlatformBackingStore(QWindow *wi
+     return new QHaikuBackingStore(window);
+ }
+ 
++#if QT_CONFIG(opengl)
+ QPlatformOpenGLContext *QHaikuIntegration::createPlatformOpenGLContext(QOpenGLContext *context) const
+ {
+ 	if (m_openGlEnabled)
+ 		return new QHaikuGLContext(context);
+ 	return nullptr;
+ }
++#endif
+ 
+ QAbstractEventDispatcher *QHaikuIntegration::createEventDispatcher() const
+ {
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.h b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.h
+index 3385918..356f34a 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.h
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikuintegration.h
+@@ -42,13 +42,17 @@
+ #define QHAIKUINTEGRATION_H
+ 
+ #include <qpa/qplatformintegration.h>
++#if QT_CONFIG(opengl)
+ #include <qpa/qplatformopenglcontext.h>
++#endif
+ #include <qscopedpointer.h>
+ 
+ #include "qhaikuapplication.h"
+ #include "qhaikuwindow.h"
+ #include "qhaikubackingstore.h"
++#if QT_CONFIG(opengl)
+ #include "qhaikuglcontext.h"
++#endif
+ #include "qhaikuscreen.h"
+ #include "qhaikutheme.h"
+ #include "qhaikuclipboard.h"
+@@ -77,7 +81,9 @@ public:
+ 
+     QPlatformWindow *createPlatformWindow(QWindow *window) const;
+     QPlatformBackingStore *createPlatformBackingStore(QWindow *window) const;
++#if QT_CONFIG(opengl)
+     QPlatformOpenGLContext *createPlatformOpenGLContext(QOpenGLContext *context) const;
++#endif
+     
+     QPlatformClipboard *clipboard() const;
+ 
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.cpp b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.cpp
+index f434a36..99bbaa8 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.cpp
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.cpp
+@@ -43,7 +43,9 @@
+ #include "qhaikuwindow.h"
+ #include "qhaikuintegration.h"
+ 
++#if QT_CONFIG(opengl)
+ #include <QtGui/QOpenGLContext>
++#endif
+ 
+ #include <QtGui/QScreen>
+ #include <QtGui/QWindow>
+@@ -76,12 +78,14 @@ void *QHaikuNativeInterface::nativeResourceForIntegration(const QByteArray &reso
+     return 0;
+ }
+ 
++#if QT_CONFIG(opengl)
+ void *QHaikuNativeInterface::nativeResourceForContext(const QByteArray &resource, QOpenGLContext *context)
+ {
+ 	Q_UNUSED(resource)
+ 	Q_UNUSED(context)
+     return 0;
+ }
++#endif
+ 
+ void QHaikuNativeInterface::setWindowProperty(QPlatformWindow *window, const QString &name, const QVariant &value)
+ {
+diff --git a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.h b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.h
+index 9b800d8..fdf8689 100644
+--- a/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.h
++++ b/qthaikuplugins/platforms/qhaikuplatform/haiku/qhaikunativeinterface.h
+@@ -53,7 +53,9 @@ public:
+     void *nativeResourceForWindow(const QByteArray &resource, QWindow *window) override;
+     void *nativeResourceForScreen(const QByteArray &resource, QScreen *screen) override;
+     void *nativeResourceForIntegration(const QByteArray &resource) override;
++#if QT_CONFIG(opengl)
+     void *nativeResourceForContext(const QByteArray &resource, QOpenGLContext *context) override;
++#endif
+ 
+     void setWindowProperty(QPlatformWindow *window, const QString &name, const QVariant &value) override;
+     NativeResourceForIntegrationFunction nativeResourceFunctionForIntegration(const QByteArray &resource) override;

@@ -305,3 +305,28 @@ through the ccache Flush64 register) before drawing the RISC-V screen,
 around the splash, and before ExitBootServices
 (`src/system/boot/platform/efi/video.cpp`, `arch/riscv64/arch_dtb.cpp`,
 `arch/riscv64/arch_start.cpp`).
+
+## OpenGL on Haiku riscv64: Mesa softpipe through libglvnd
+
+*Confirmed on the Orange Pi RV (2026-11-25).* Mesa 25.3.6 (softpipe, no
+LLVM) with libglvnd 1.7.0, cross-built: a BGLView window and a Qt
+QOpenGLWidget both draw (GL 3.3 compatibility / 2.1). Two traps:
+
+* **Don't render inside `BGLView::Draw()`.** With libglvnd's GL kit,
+  `SwapBuffers()` hands the frame to the view as a bitmap and invalidates it;
+  `BGLView::Draw()` paints that bitmap. An app that overrides `Draw()` to
+  render hides every frame (white window) and re-renders on every swap.
+  Render from `AttachedToWindow()`/`FrameResized()`/a timer instead.
+* **qthaikuplugins' OSMesa-on-BGLView bridge read `GL_FRONT`** in
+  `OSMesaSwapBuffers()` before any swap, so Qt windows were black. Read
+  `GL_BACK`. Patch: `docs/beacon/qt5/beacon-qthaikuplugins-osmesa-backbuffer.patch`.
+
+Also: libglvnd's HGL `meson.build` hard-codes a host header path (prefix it
+with the sysroot); our headers have only `PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP`.
+Patches in `docs/beacon/qt5/`.
+
+## QML (Qt Quick) on Haiku riscv64
+
+*Confirmed (2026-11-25).* qtdeclarative 5.15.19 with the QML JIT disabled
+(5.15 has no riscv64 JIT backend; the V4 interpreter runs it). A
+QQuickWidget renders through the OpenGL path above.

@@ -1,0 +1,34 @@
+Beacon patch for libglvnd 1.7.0 (after the HaikuPorts libglvnd-1.7.0.patchset), cross-build for Haiku riscv64.
+Apply with "patch -p1" from the directory that holds libglvnd-v1.7.0/.
+
+diff --git a/libglvnd-v1.7.0/src/HGL/GLView.cpp b/libglvnd-v1.7.0/src/HGL/GLView.cpp
+index e0430cb..934529f 100644
+--- a/libglvnd-v1.7.0/src/HGL/GLView.cpp
++++ b/libglvnd-v1.7.0/src/HGL/GLView.cpp
+@@ -10,6 +10,12 @@
+  *        Alexander von Gluck IV, kallisti5@unixzen.com
+  */
+ 
++/* Beacon: Haiku headers older than the PTHREAD_RECURSIVE_MUTEX_INITIALIZER
++   alias only have the _NP name. */
++#include <pthread.h>
++#ifndef PTHREAD_RECURSIVE_MUTEX_INITIALIZER
++#define PTHREAD_RECURSIVE_MUTEX_INITIALIZER PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
++#endif
+ #include <kernel/image.h>
+ 
+ #define EGL_EGL_PROTOTYPES 0
+diff --git a/libglvnd-v1.7.0/src/HGL/meson.build b/libglvnd-v1.7.0/src/HGL/meson.build
+index 601fab7..314ef23 100644
+--- a/libglvnd-v1.7.0/src/HGL/meson.build
++++ b/libglvnd-v1.7.0/src/HGL/meson.build
+@@ -33,7 +33,8 @@ libGL = shared_library(
+   include_directories : [
+     inc_include,
+     inc_include_hgl,
+-    '/boot/system/develop/headers/private/shared'
++    # Beacon: honour the cross sysroot (empty when building natively).
++    meson.get_external_property('sys_root', '') + '/boot/system/develop/headers/private/shared'
+   ],
+   link_args : '-Wl,-Bsymbolic',
+   dependencies : [

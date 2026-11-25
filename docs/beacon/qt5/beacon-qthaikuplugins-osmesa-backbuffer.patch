@@ -1,0 +1,13 @@
+--- a/platforms/qhaikuplatform/haiku/osmesa_bgl.h	2026-11-25 13:52:57.933309009 -0500
++++ b/platforms/qhaikuplatform/haiku/osmesa_bgl.h	2026-11-25 13:52:57.953309203 -0500
+@@ -445,7 +445,9 @@
+ 		return;
+ 	}
+ 	
+-	glReadBuffer(GL_FRONT);
++	// Beacon: read the frame just rendered. No buffer swap happens before
++	// this, so GL_FRONT still holds the previous (initially black) frame.
++	glReadBuffer(GL_BACK);
+ 	
+ 	glReadPixels(0, 0, context->width, context->height,
+ 			   GL_BGRA, GL_UNSIGNED_BYTE, context->userBuffer);

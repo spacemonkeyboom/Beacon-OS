@@ -22,7 +22,9 @@ needed and security updates are easier.
   `fontconfig-2.18.2-2` links `libxml2.so.2`, but the riscv64 repository only
   has libxml2 2.15.3 (`libxml2.so.16`), so it cannot load. Our build uses
   expat, fontconfig's default XML parser.
-* OpenGL and D-Bus are off (no Mesa for riscv64 yet).
+* **OpenGL** (Mesa 25.3.6 softpipe via libglvnd) and **QML** (qtdeclarative,
+  interpreter only) work on the board as of 2026-11-25; qtwebchannel,
+  NSPR 4.39 and NSS 3.134 are built. D-Bus is off.
 
 ## How it's built
 
