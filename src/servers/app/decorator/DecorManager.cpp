@@ -119,7 +119,21 @@ DecorManager::DecorManager()
 	fPreviewWindow(NULL),
 	fCurrentDecorPath("Default")
 {
-	_LoadSettingsFromDisk();
+	if (_LoadSettingsFromDisk())
+		return;
+
+	// Beacon: with no saved choice, default to the Flat decorator from the
+	// haiku_extras system package; fall back to the built-in one if absent.
+	BPath path;
+	if (find_directory(B_SYSTEM_ADDONS_DIRECTORY, &path) == B_OK
+		&& path.Append("decorators/FlatDecorator") == B_OK) {
+		status_t error = B_OK;
+		DecorAddOn* decor = _LoadDecor(path.Path(), error);
+		if (decor != NULL) {
+			fCurrentDecor = decor;
+			fCurrentDecorPath = path.Path();
+		}
+	}
 }
 
 

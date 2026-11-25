@@ -78,7 +78,7 @@ extern "C" const char B_NOTIFICATION_SENDER[] = "be:sender";
 static const rgb_color _kDefaultColors[kColorWhichCount] = {
 	{216, 216, 216, 255},	// B_PANEL_BACKGROUND_COLOR
 	{216, 216, 216, 255},	// B_MENU_BACKGROUND_COLOR
-	{255, 203, 0, 255},		// B_WINDOW_TAB_COLOR
+	{160, 192, 255, 255},	// B_WINDOW_TAB_COLOR (Beacon blue; Haiku: 255, 203, 0)
 	{0, 0, 229, 255},		// B_KEYBOARD_NAVIGATION_COLOR
 	{51, 102, 152, 255},	// B_DESKTOP_COLOR
 	{153, 153, 153, 255},	// B_MENU_SELECTED_BACKGROUND_COLOR

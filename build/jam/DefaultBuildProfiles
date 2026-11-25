@@ -162,7 +162,11 @@ rule DefineDefaultBuildProfiles
 			}
 			# Beacon: a full image can build software on the board itself
 			AddHaikuImageSystemPackages binutils gcc make gmp mpfr mpc ;
-			# (haiku_devel is activated in images/HaikuImage)
+			# (haiku_devel is activated via DevelopmentMin in OptionalPackages)
+			# Beacon: extra decorators/control looks; Flat is the default
+			# decorator (src/servers/app/decorator/DecorManager.cpp).
+			AddPackageFilesToHaikuImage system packages : haiku_extras.hpkg
+				: nameFromMetaInfo ;
 
 			AddHaikuImageSystemPackages
 				mandoc
