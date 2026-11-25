@@ -98,6 +98,22 @@ arch_thread_context_switch(Thread *from, Thread *to)
 		FenceI();
 	}
 
+	{
+		// Beacon: the U74 (JH7110) can keep a stale "not mapped" TLB entry
+		// for a page that was mapped later, and Haiku doesn't flush when an
+		// invalid PTE becomes valid. If that page is the incoming thread's
+		// kernel stack, the trap entry code (SVecU/SVec) faults while
+		// saving the trap frame, before any handler can fix it up: the
+		// nested trap overwrites sepc/sstatus and the CPU ends up treating
+		// a kernel fault as a user fault (deadlock in send_signal_to_thread,
+		// "Failed to acquire spinlock"). Drop any such entries for the
+		// stack this CPU is about to use. Done even after the ASID flush
+		// above, which doesn't drop global (kernel) entries.
+		for (addr_t page = ROUNDDOWN(to->kernel_stack_base, B_PAGE_SIZE);
+				page < to->kernel_stack_top; page += B_PAGE_SIZE)
+			FlushTlbPage(page);
+	}
+
 	arch_context_switch(&from->arch_info.context, &to->arch_info.context);
 }
 

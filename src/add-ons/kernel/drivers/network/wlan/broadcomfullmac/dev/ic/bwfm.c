@@ -140,6 +140,8 @@ void	 bwfm_scan(struct bwfm_softc *);
 void	 bwfm_scan_abort(struct bwfm_softc *);
 
 void	 bwfm_task(void *);
+void	 bwfm_watchdog_task(void *);
+void	 bwfm_link_watchdog(struct bwfm_softc *);
 void	 bwfm_do_async(struct bwfm_softc *,
 	     void (*)(struct bwfm_softc *, void *), void *, int);
 
@@ -204,6 +206,7 @@ bwfm_attach(struct bwfm_softc *sc)
 	sc->sc_cmdq.cur = sc->sc_cmdq.next = sc->sc_cmdq.queued = 0;
 	sc->sc_taskq = taskq_create(DEVNAME(sc), 1, IPL_SOFTNET, 0);
 	task_set(&sc->sc_task, bwfm_task, sc);
+	task_set(&sc->sc_watchdog_task, bwfm_watchdog_task, sc);
 	ml_init(&sc->sc_evml);
 
 	ic->ic_phytype = IEEE80211_T_OFDM;	/* not only, but not used */
@@ -583,14 +586,12 @@ bwfm_init(struct ifnet *ifp)
 	}
 
 	/*
-	 * Use CAM (constantly awake) when we are running as AP,
-	 * otherwise use fast power saving.
+	 * Beacon: always CAM (constantly awake). With fast power saving the
+	 * link dropped after the board sat idle and never came back, and
+	 * idle pings took ~200 ms to 1 s. Boards here run on mains power.
+	 * (OpenBSD: CAM only as AP, fast power saving otherwise.)
 	 */
-	pm = BWFM_PM_FAST_PS;
-#ifndef IEEE80211_STA_ONLY
-	if (ic->ic_opmode == IEEE80211_M_HOSTAP)
-		pm = BWFM_PM_CAM;
-#endif
+	pm = BWFM_PM_CAM;
 	if (bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PM, pm)) {
 		printf("%s: could not set power\n", DEVNAME(sc));
 		return;
@@ -2909,6 +2910,36 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	ieee80211_input(ifp, m, ni, &rxi);
 	/* Node is no longer needed. */
 	ieee80211_release_node(ic, ni);
+}
+
+/*
+ * Beacon: link watchdog. The bus driver calls bwfm_link_watchdog() when
+ * net80211 thinks we are associated but nothing has been received for a
+ * long time. The firmware sometimes loses the AP without reporting a
+ * LINK/DEAUTH event, which left the interface "up" but dead until reboot.
+ * Rescan and rejoin, as the LINK event handler does.
+ */
+void
+bwfm_link_watchdog(struct bwfm_softc *sc)
+{
+	task_add(sc->sc_taskq, &sc->sc_watchdog_task);
+}
+
+void
+bwfm_watchdog_task(void *arg)
+{
+	struct bwfm_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	int s;
+
+	s = splnet();
+	if (ic->ic_state == IEEE80211_S_RUN) {
+		printf("%s: link watchdog: nothing received for a long time, "
+		    "rejoining\n", DEVNAME(sc));
+		ieee80211_begin_scan(ifp);
+	}
+	splx(s);
 }
 
 void

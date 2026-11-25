@@ -149,7 +149,10 @@ beacon_display_restore()
 		{0x24e8, 0xc24}, {0x1ccc, 1},
 	};
 	volatile uint32* dc = (volatile uint32*)0x29400000;
-	kSeq[6].val = (uint32)gKernelArgs.frame_buffer.physical_buffer.start;
+	// The display controller needs the real DDR address, not the CPU's
+	// uncached alias (gFrameBufferAliasOffset).
+	kSeq[6].val = (uint32)(gKernelArgs.frame_buffer.physical_buffer.start
+		- gFrameBufferAliasOffset);
 	for (auto& w : kSeq)
 		dc[w.off / 4] = w.val;
 	dprintf("BEACON-DISP: dc8200 replayed %u writes; 04=%#x 1400=%#x 1cc0=%#x\n",

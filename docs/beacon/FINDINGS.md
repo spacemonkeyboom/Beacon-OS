@@ -208,3 +208,50 @@ Wi-Fi and DNS come up (`src/preferences/time/Time.cpp`). The default time zone
 is America/New_York when none is saved (`src/kits/locale/LocaleRosterData.cpp`,
 `src/servers/launch/InitRealTimeClockJob.cpp`). The earlier Time crash in
 `nsdispatch` did not reproduce from the command line once the clock was close.
+
+## Kernel panic "Failed to acquire spinlock" (fault in the trap entry code)
+
+*Pending (rv61, 2026-11-25).* The SiFive U74 does not set a page's
+accessed/dirty bits in hardware: the first access to a page with them clear
+faults. Kernel mappings were made with the bits clear, so the first write to a
+new kernel stack page could fault inside `SVec`/`SVecU` while they push the
+trap frame. The nested trap overwrites `sepc`/`scause`/`stval`/`sstatus` of the
+trap being entered, the original trap is lost, and the kernel then treats a
+kernel fault as a user fault (deadlock in `send_signal_to_thread`).
+Fix taken from **RenkuOS** (PR #523 by atomozero, MIT): kernel mappings get the
+accessed/dirty bits up front (`RISCV64VMTranslationMap::Map()`), and a fault in
+the trap entry code now panics with a clear message (`arch_int.cpp`). Beacon
+also drops stale TLB entries for the incoming thread's kernel stack at every
+context switch (`arch_thread.cpp`).
+
+## Boot screens noisy, desktop white at first (JH7110 display not cache coherent)
+
+*Pending (rv61).* The JH7110 display controller reads DDR behind the L2 cache,
+so pixels written through the cached memory port show up late or as noise.
+The same DDR is mapped uncached at 0x4_4000_0000 (JH7110 TRM table 2-4). Fix
+taken from **RenkuOS** (PR #490 by atomozero, MIT): the EFI loader hands the
+kernel the frame buffer through that alias (`gFrameBufferAliasOffset`,
+`arch_dtb.cpp`, `video.cpp`). Beacon's periodic ccache flusher is skipped when
+the frame buffer is uncached (`arch_platform.cpp`), and the display-replay code
+programs the controller with the real DDR address (`arch_start.cpp`).
+
+## Wi-Fi (BCM43456 via bwfm) drops after idling and never reconnects
+
+*Pending (rv61).* With fast power saving, the link dropped after the board sat
+idle, and the driver logged no LINK/DEAUTH event; idle pings were 200 ms to
+1 s. Fix (`broadcomfullmac/dev/ic/bwfm.c`, `dev/sdmmc/if_bwfm_sdio.c`): power
+saving off (CAM), plus a link watchdog that rescans and rejoins when net80211
+is in RUN but nothing has been received for 3 minutes.
+
+## Restart hangs ("pmic_ops: cannot read pmic power register")
+
+*Open.* `shutdown -r` stops everything, then fails to reset the board through
+the PMIC, so the board hangs until power-cycled.
+
+## HaikuPorts riscv64 fontconfig can't load
+
+*Confirmed (2026-11-25).* `fontconfig-2.18.2-2` (riscv64) links
+`libxml2.so.2`, but the riscv64 repository only has libxml2 2.15.3
+(`libxml2.so.16`), so anything using fontconfig fails to load ("Missing
+library") and `pkgman install fontconfig` can hang. Beacon rebuilds fontconfig
+with expat, its default XML parser.

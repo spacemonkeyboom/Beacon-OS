@@ -17,6 +17,7 @@ extern "C" {
 }
 
 #include "dtb.h"
+#include "efi_platform.h"
 
 
 uint32 gBootHart = 0;
@@ -99,8 +100,15 @@ arch_handle_fdt(const void* fdt, int node)
 
 	// Root node: the StarFive JH7110's display engine (DC8200) does not snoop
 	// the CPU caches.
-	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110"))
+	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110")) {
 		sNonCoherentDisplaySoC = true;
+		// From RenkuOS (PR #490, atomozero), MIT: the display controller
+		// reads memory behind the L2 cache, so draw through the uncached
+		// "system port" view of the DDR (0x4_4000_0000, the memory port at
+		// 0x4000_0000 plus this offset, JH7110 TRM table 2-4).
+		gFrameBufferAliasOffset = 0x400000000ULL;
+		dprintf("JH7110: frame buffer through the uncached DDR port\n");
+	}
 
 	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110-ccache")
 		|| dtb_has_fdt_string(compatible, compatibleLen, "sifive,fu740-c000-ccache")
@@ -171,6 +179,9 @@ extern "C" void
 beacon_flush_display_range(addr_t start, size_t size)
 {
 	if (!sNonCoherentDisplaySoC || sCcache.size == 0 || size == 0)
+		return;
+	// Drawing through the uncached alias needs no flush.
+	if (gFrameBufferAliasOffset != 0 && start >= gFrameBufferAliasOffset)
 		return;
 
 	const size_t kLineSize = 64;

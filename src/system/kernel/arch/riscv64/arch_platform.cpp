@@ -215,6 +215,13 @@ start_frame_buffer_flusher(kernel_args* args)
 	sDiagHdmi = diag_map("diag hdmi", 0x29590000, 0x1000);
 	dump_display_state();
 
+	// The loader hands over the uncached DDR alias (0x4_4000_0000 and up)
+	// on the JH7110; writes there reach the display without a flush.
+	if (args->frame_buffer.physical_buffer.start >= 0x400000000ULL) {
+		dprintf("ccache: frame buffer is uncached, no flusher needed\n");
+		return;
+	}
+
 	thread_id thread = spawn_kernel_thread(frame_buffer_flusher,
 		"frame buffer flusher", B_DISPLAY_PRIORITY, NULL);
 	if (thread < 0)

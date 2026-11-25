@@ -52,4 +52,10 @@ extern const efi_boot_services		*kBootServices;
 extern const efi_runtime_services	*kRuntimeServices;
 extern efi_handle kImage;
 
+// Added to the GOP frame buffer address handed to the kernel and used for
+// drawing, for SoCs whose display controller does not see the CPU caches and
+// that have an uncached alias of the memory (set from the device tree).
+// From RenkuOS (PR #490, atomozero), MIT.
+extern uint64_t gFrameBufferAliasOffset;
+
 #endif	/* EFI_PLATFORM_H */

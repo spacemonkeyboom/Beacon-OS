@@ -191,6 +191,7 @@ struct bwfm_softc {
 	struct bwfm_host_cmd_ring sc_cmdq;
 	struct taskq		*sc_taskq;
 	struct task		 sc_task;
+	struct task		 sc_watchdog_task;	/* Beacon */
 	struct mbuf_list	 sc_evml;
 
 	int			 sc_bcdc_reqid;
@@ -212,6 +213,7 @@ struct bwfm_softc {
 };
 
 void bwfm_attach(struct bwfm_softc *);
+void bwfm_link_watchdog(struct bwfm_softc *);	/* Beacon */
 #ifdef __HAIKU__
 void bwfm_attachhook(struct bwfm_softc *);
 #else

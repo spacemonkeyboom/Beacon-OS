@@ -754,6 +754,7 @@ bwfm_sdio_poller(void *arg)
 {
 	struct bwfm_sdio_softc *sc = arg;
 	bigtime_t next_stats = system_time() + 60000000;
+	bigtime_t last_watchdog = 0;
 
 	while (sc->sc_poll_on) {
 		acquire_sem_etc(sc->sc_poll_sem, 1, B_RELATIVE_TIMEOUT, 10000);
@@ -762,6 +763,19 @@ bwfm_sdio_poller(void *arg)
 		mtx_lock(&Giant);
 		bwfm_sdio_task(sc);
 		mtx_unlock(&Giant);
+		/* Beacon: associated but nothing received for 3 minutes (with
+		 * power saving off, an AP's broadcasts arrive far more often):
+		 * ask bwfm to rejoin, at most once every 3 minutes. */
+		{
+			bigtime_t now = system_time();
+			const bigtime_t kSilence = 180000000LL;
+			if (sc->sc_sc.sc_ic.ic_state == IEEE80211_S_RUN
+			    && sc->sc_last_rx != 0 && now - sc->sc_last_rx > kSilence
+			    && now - last_watchdog > kSilence) {
+				last_watchdog = now;
+				bwfm_link_watchdog(&sc->sc_sc);
+			}
+		}
 		/* Beacon: a silent stall (link up, nothing moving) must show up */
 		if (system_time() >= next_stats) {
 			next_stats += 60000000;
