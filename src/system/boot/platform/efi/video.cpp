@@ -185,6 +185,8 @@ depth_from_mode_info(efi_graphics_output_mode_information* info)
 #ifdef __riscv
 #include "arch/riscv64/riscv_boot_logo.h"
 
+extern "C" void beacon_flush_display_range(addr_t start, size_t size);
+
 
 // Beacon: replace the firmware's boot logo with RISC-V International's
 // official logo on Berkeley Blue as soon as the loader has video. Draws into
@@ -234,10 +236,13 @@ beacon_draw_riscv_screen(void)
 			if (++x == kRiscvLogoWidth) {
 				x = 0;
 				if (++y == kRiscvLogoHeight)
-					return;
+					goto done;
 			}
 		}
 	}
+done:
+	beacon_flush_display_range((addr_t)frameBuffer,
+		(size_t)stride * height * sizeof(uint32));
 }
 #endif
 
@@ -356,6 +361,10 @@ platform_switch_to_logo(void)
 			* ((depth + 7) / 8);
 
 	video_display_splash(gKernelArgs.frame_buffer.physical_buffer.start);
+#ifdef __riscv
+	beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,
+		gKernelArgs.frame_buffer.physical_buffer.size);
+#endif
 }
 
 

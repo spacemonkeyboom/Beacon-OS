@@ -160,3 +160,26 @@ arch_dtb_set_kernel_args(void)
 	} else
 		gKernelArgs.arch_args.ccache = {.start = 0, .size = 0};
 }
+
+
+// Beacon: the JH7110 display engine does not snoop the CPU caches, so frame
+// buffer writes made by the loader show up as noise until they leave the L2
+// cache. Push a range out through the SiFive ccache Flush64 register (the
+// kernel does the same periodically once it runs). Physical addresses are
+// identity mapped while EFI boot services are active.
+extern "C" void
+beacon_flush_display_range(addr_t start, size_t size)
+{
+	if (!sNonCoherentDisplaySoC || sCcache.size == 0 || size == 0)
+		return;
+
+	const size_t kLineSize = 64;
+	const size_t kFlush64 = 0x200;
+	volatile uint64* flush64 = (volatile uint64*)(addr_t)(sCcache.start + kFlush64);
+	addr_t end = start + size;
+	__sync_synchronize();
+	for (addr_t line = start & ~(addr_t)(kLineSize - 1); line < end;
+			line += kLineSize)
+		*flush64 = line;
+	__sync_synchronize();
+}
