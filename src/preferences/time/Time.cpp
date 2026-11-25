@@ -104,6 +104,56 @@ TimeApplication::MessageReceived(BMessage* message)
 }
 
 
+// Beacon: one NTP attempt with a time limit. The attempt runs in its own
+// thread; if it hangs (blocked DNS lookup or socket), it is abandoned and
+// left behind; the process exits when the boot job ends.
+struct TimedUpdate {
+	Settings*	settings;
+	const char*	errorString;
+	int32		errorCode;
+	status_t	status;
+};
+
+
+static status_t
+timed_update_thread(void* data)
+{
+	TimedUpdate* update = (TimedUpdate*)data;
+	update->status = update_time(*update->settings, &update->errorString,
+		&update->errorCode);
+	return B_OK;
+}
+
+
+static status_t
+timed_update_time(Settings& settings, bigtime_t timeout,
+	const char** _errorString, int32* _errorCode)
+{
+	// Leaked on purpose if the thread hangs: it may still write to it.
+	TimedUpdate* update = new TimedUpdate{&settings, NULL, 0, B_ERROR};
+	thread_id thread = spawn_thread(timed_update_thread, "ntp attempt",
+		B_NORMAL_PRIORITY, update);
+	if (thread < 0) {
+		delete update;
+		return update_time(settings, _errorString, _errorCode);
+	}
+	resume_thread(thread);
+	status_t exitValue;
+	status_t result = wait_for_thread_etc(thread, B_RELATIVE_TIMEOUT, timeout,
+		&exitValue);
+	if (result != B_OK) {
+		*_errorString = "NTP attempt timed out";
+		*_errorCode = 0;
+		return B_TIMED_OUT;
+	}
+	*_errorString = update->errorString;
+	*_errorCode = update->errorCode;
+	status_t status = update->status;
+	delete update;
+	return status;
+}
+
+
 int
 main(int argc, char** argv)
 {
@@ -127,15 +177,20 @@ main(int argc, char** argv)
 		const char* errorString = NULL;
 		int32 errorCode = 0;
 		status_t status = B_OK;
-		if (doSync)
+		if (doSync && !bootUpdate)
 			status = update_time(settings, &errorString, &errorCode);
-		// Wi-Fi and DNS may need a moment after "network available".
-		for (int32 attempt = 1; doSync && bootUpdate && status != B_OK
-				&& attempt < 12; attempt++) {
-			snooze(10000000);
-			errorString = NULL;
-			errorCode = 0;
-			status = update_time(settings, &errorString, &errorCode);
+		// Beacon: at boot, each attempt runs in its own thread and is given
+		// up after 15 s (a DNS lookup on a lossy Wi-Fi link once blocked the
+		// job for over half an hour). Retry quickly at first: Wi-Fi and DNS
+		// may need a moment after "network available".
+		for (int32 attempt = 0; doSync && bootUpdate && attempt < 20;
+				attempt++) {
+			if (attempt > 0)
+				snooze(attempt < 5 ? 2000000 : 10000000);
+			status = timed_update_time(settings, 15000000, &errorString,
+				&errorCode);
+			if (status == B_OK)
+				break;
 		}
 		if (!doSync) {
 			// nothing to report

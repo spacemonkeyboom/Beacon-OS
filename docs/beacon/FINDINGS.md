@@ -330,3 +330,11 @@ Patches in `docs/beacon/qt5/`.
 *Confirmed (2026-11-25).* qtdeclarative 5.15.19 with the QML JIT disabled
 (5.15 has no riscv64 JIT backend; the V4 interpreter runs it). A
 QQuickWidget renders through the OpenGL path above.
+
+## Boot time sync hung for half an hour on a lossy Wi-Fi link
+
+*Pending (next image).* `Time --boot-update` sat asleep in one blocking call
+(the NTP server-name lookup) while the Wi-Fi link was dropping most packets,
+so its retry loop never ran again. Fix (`src/preferences/time/Time.cpp`):
+each boot attempt runs in its own thread with a 15 s limit (a hung attempt is
+abandoned), retries every 2 s at first, then every 10 s, up to 20 tries.
