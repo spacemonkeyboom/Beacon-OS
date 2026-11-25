@@ -24,6 +24,9 @@ Beacon 0.4 running WebPositive on an Orange Pi RV (8 GB), captured on the board 
 <p align="center">
   <img src="docs/beacon/screenshots/beacon-0.4-webpositive-2.jpg" alt="Beacon 0.4: WebPositive with a Google search for BeOS and CNN, ActivityMonitor showing all four cores" width="860">
 </p>
+<p align="center">
+  <img src="docs/beacon/screenshots/beacon-0.4-webpositive-3.jpg" alt="Beacon 0.4: WebPositive showing the Beacon-OS GitHub page" width="860">
+</p>
 
 Beacon 0.3:
 
