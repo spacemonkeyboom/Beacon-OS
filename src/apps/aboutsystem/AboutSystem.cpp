@@ -987,9 +987,9 @@ SysInfoView::_GetOSVersion()
 	// Beacon: show the Beacon release, and the Haiku revision it is based on
 	const char* hrev = __get_haiku_revision();
 	if (hrev != NULL)
-		revision.SetToFormat("Beacon 0.4 (Haiku %s)", hrev);
+		revision.SetToFormat("Beacon 0.4.1 (Haiku %s)", hrev);
 	else
-		revision = "Beacon 0.4";
+		revision = "Beacon 0.4.1";
 
 	return revision;
 }
