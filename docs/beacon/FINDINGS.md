@@ -468,3 +468,22 @@ is the 4-bit microSD slot and GPIO62 drives the USB0 switch
 (jh7110-starfive-visionfive-2-lite.dtsi). Fix: the fallback now applies only
 when sdio0 is described as 8-bit, which is the VisionFive 2 vendor DT the
 Orange Pi RV gets. File: src/add-ons/kernel/busses/mmc/dw_mmc/kernel_interface.cpp.
+
+## VisionFive 2 Lite: kernel store fault at the RAM base (OpenSBI region)
+
+*Seen on the VF2 Lite with the Orange Pi RV image rv69 (serial log
+vf2lite-20261126-105630); fix pending a test.* The kernel panicked right
+after the SBI version lines: storeAccessFault, tval 0xffffffff00000000
+(physMapBase = physical 0x40000000), in memset() clearing a fresh page.
+OpenSBI v1.2 sits at 0x40000000-0x4003ffff and is PMP-protected from
+S-mode, but the Lite's SDK U-Boot reports that range as
+EfiBootServicesData, so the loader gave it to the kernel as free RAM. (The
+Orange Pi RV U-Boot reports 0x40000000-0x40080000 as EfiReservedMemoryType.)
+Fix: the riscv64 EFI loader now removes every /memreserve/ entry and
+/reserved-memory region of the device tree from RAM, and always keeps the
+first 2 MiB of RAM (the SBI firmware's place below the usual kernel load
+address) unless the loader itself already allocated pages there. Files:
+src/system/boot/platform/efi/dtb.cpp, dtb.h, arch/riscv64/arch_mmu.cpp.
+The same log showed the Lite's U-Boot looking only at mmc 0:3 (see the
+partition 3 entry above) and a black screen (no "starfive,jh7110" in the
+vendor DT, see the jh7110s entry above).
