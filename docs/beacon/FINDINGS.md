@@ -537,3 +537,16 @@ screen (intermittent, depends on allocation). Affects every JH7110 board
 since the alias change, the Orange Pi RV and VisionFive 2 included. Fix:
 src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp subtracts
 gFrameBufferAliasOffset before removing the range.
+
+## cdns3_jh7110: the xHCI never started (child node without a module)
+
+*Seen on the VF2 Lite with vf2lite-04: host mode on, then no xhci line, and
+the glue ran twice; fix in vf2lite-05, pending.* The glue published its
+"xhci_platform" child with register_node(..., NULL module, ...), which the
+device manager rejects; the failed child registration also made the glue
+node get initialized again (the second power-up sequence). Fix: the glue
+node now carries xhci/phys, xhci/size, xhci/irq and names
+"busses/usb/xhci/platform/driver_v1" as its B_DEVICE_FIXED_CHILD; the xhci
+platform module is attached only that way (its supports_device returns 0).
+Also measured: PLL0 on the Lite is 1.0 GHz (not the 1.25 GHz in Linux's
+DT), so usb_125m needs div 8; the driver computes it from the PLL registers.

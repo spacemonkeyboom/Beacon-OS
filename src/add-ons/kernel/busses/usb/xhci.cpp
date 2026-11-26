@@ -40,7 +40,6 @@ static usb_for_controller_interface* gUSB;
 #define XHCI_PCI_DEVICE_MODULE_NAME "busses/usb/xhci/pci/driver_v1"
 #define XHCI_PCI_USB_BUS_MODULE_NAME "busses/usb/xhci/device_v1"
 #define XHCI_PLATFORM_DEVICE_MODULE_NAME "busses/usb/xhci/platform/driver_v1"
-#define XHCI_PLATFORM_BUS "xhci_platform"
 
 
 typedef struct {
@@ -232,15 +231,14 @@ supports_device(device_node* parent)
 // #pragma mark - Beacon: platform (device tree) controllers
 
 
+/*!	Platform controllers are attached only as the B_DEVICE_FIXED_CHILD of
+	their glue driver's node (which carries xhci/phys, xhci/size, xhci/irq),
+	never by probing, so the same registers can't get a second driver.
+*/
 static float
 platform_supports_device(device_node* parent)
 {
-	const char* bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-			< B_OK) {
-		return -1;
-	}
-	return strcmp(bus, XHCI_PLATFORM_BUS) == 0 ? 0.9f : 0.0f;
+	return 0.0f;
 }
 
 

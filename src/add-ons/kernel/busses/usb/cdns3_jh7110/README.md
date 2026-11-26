@@ -1,8 +1,8 @@
 # cdns3_jh7110: StarFive JH7110/JH7110S Cadence USB 3 host glue
 
 Powers the on-chip Cadence USB 3 controller (cdns3) of the StarFive JH7110
-family, puts it in host mode and publishes an `xhci_platform` device node.
-Haiku's `<usb>xhci` add-on (MIT) attaches to that node (attributes
+family, puts it in host mode and names the xHCI platform driver as its fixed child.
+Haiku's `<usb>xhci` add-on (MIT, platform attachment) then reads the node attributes (
 `xhci/phys`, `xhci/size`, `xhci/irq`) and drives the controller as a normal
 xHCI. Written for the VisionFive 2 Lite, whose USB-A ports (1x USB 3.0 +
 3x USB 2.0 via a hub) hang off this controller. On the VisionFive 2 and the

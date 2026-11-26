@@ -43,7 +43,7 @@
 
 
 #define CDNS3_JH7110_MODULE_NAME "busses/usb/cdns3_jh7110/driver_v1"
-#define XHCI_PLATFORM_BUS "xhci_platform"
+#define XHCI_PLATFORM_MODULE_NAME "busses/usb/xhci/platform/driver_v1"
 
 #define INFO(x...) dprintf("cdns3_jh7110: " x)
 #define ERROR(x...) dprintf("cdns3_jh7110: " x)
@@ -422,21 +422,39 @@ cdns3_supports_device(device_node* parent)
 }
 
 
+static void read_config(device_node* fdtNode, struct Cdns3Jh7110& usb);
+
+
+/*!	The xHCI (MIT <usb>xhci, platform attachment) is this node's fixed
+	child; it reads xhci/phys, xhci/size and xhci/irq from here. The device
+	manager initializes this node (power-up, host mode) before the child.
+*/
 static status_t
 cdns3_register_device(device_node* parent)
 {
+	Cdns3Jh7110 config;
+	read_config(parent, config);
+
 	device_attr attrs[] = {
 		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
 			{ .string = "StarFive JH7110 Cadence USB 3 (host)" }},
+		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
+			{ .string = XHCI_PLATFORM_MODULE_NAME }},
+		{ "xhci/phys", B_UINT64_TYPE, { .ui64 = config.xhciPhys }},
+		{ "xhci/size", B_UINT64_TYPE, { .ui64 = kXhciSize }},
+		{ "xhci/irq", B_UINT32_TYPE, { .ui32 = config.irq }},
 		{}
 	};
-	return gDeviceManager->register_node(parent, CDNS3_JH7110_MODULE_NAME,
-		attrs, NULL, NULL);
+	status_t status = gDeviceManager->register_node(parent,
+		CDNS3_JH7110_MODULE_NAME, attrs, NULL, NULL);
+	INFO("registered (xhci %#" B_PRIx64 ", irq %" B_PRIu32 "): %s\n",
+		config.xhciPhys, config.irq, strerror(status));
+	return status;
 }
 
 
 static void
-read_config(device_node* fdtNode, Cdns3Jh7110& usb)
+read_config(device_node* fdtNode, struct Cdns3Jh7110& usb)
 {
 	fdt_device_module_info* module;
 	fdt_device* device;
@@ -650,6 +668,7 @@ cdns3_uninit_driver(void* cookie)
 }
 
 
+#if 0
 static status_t
 cdns3_register_child_devices(void* cookie)
 {
@@ -668,6 +687,7 @@ cdns3_register_child_devices(void* cookie)
 	return gDeviceManager->register_node(usb->ownNode, NULL, attrs, NULL,
 		NULL);
 }
+#endif
 
 
 static driver_module_info gCdns3Jh7110Module = {
@@ -680,7 +700,7 @@ static driver_module_info gCdns3Jh7110Module = {
 	cdns3_register_device,
 	cdns3_init_driver,
 	cdns3_uninit_driver,
-	cdns3_register_child_devices,
+	NULL,	// register_child_devices: the xHCI is a fixed child
 	NULL,	// rescan
 	NULL,	// removed
 };

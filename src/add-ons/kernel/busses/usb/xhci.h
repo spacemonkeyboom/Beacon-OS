@@ -108,8 +108,10 @@ struct xhci_device {
 
 
 // Beacon: an xHCI that is not a PCI function (on-chip controllers found
-// through the device tree). A glue driver publishes a node with B_DEVICE_BUS
-// "xhci_platform" and the attributes "xhci/phys", "xhci/size", "xhci/irq".
+// through the device tree). A glue driver (e.g. cdns3_jh7110) names
+// "busses/usb/xhci/platform/driver_v1" as the B_DEVICE_FIXED_CHILD of its
+// node and gives that node the attributes "xhci/phys", "xhci/size" and
+// "xhci/irq".
 struct xhci_platform_info {
 	phys_addr_t	phys;
 	size_t		size;
