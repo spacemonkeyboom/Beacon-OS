@@ -44,6 +44,13 @@ library passes threads, files, networking and unwinding tests on the board.
 This is the first step toward **Firefox on RISC-V Beacon**. See
 [docs/beacon/rust](docs/beacon/rust).
 
+## Webscape Netfarer, the Beacon browser
+
+Beacon's own browser, **Webscape Netfarer**, is a Firefox-based fork with a classic interface and an
+animated W emblem. It lives in its own repository so other distributions can use it too:
+[spacemonkeyboom/Webscape-Netfarer](https://github.com/spacemonkeyboom/Webscape-Netfarer). Early work: the
+riscv64 build is compiling now.
+
 ## Screenshots
 
 Beacon on an Orange Pi RV, November 26, 2026: WebPositive on Wikipedia, Terminal,
