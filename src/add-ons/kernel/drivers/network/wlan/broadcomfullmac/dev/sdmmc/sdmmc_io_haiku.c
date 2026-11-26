@@ -27,7 +27,9 @@
 #include <sdio_bus.h>
 
 
+#ifndef SDMMC_TAG
 #define SDMMC_TAG	"bwfm"
+#endif
 
 /* Only report the first few I/O errors, a dead card would flood the log. */
 static int sSdioErrorReports = 0;

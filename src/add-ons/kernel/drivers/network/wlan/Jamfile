@@ -17,5 +17,6 @@ SubInclude HAIKU_TOP src add-ons kernel drivers network wlan zydwifi1211 ;
 
 # OpenBSD drivers
 SubInclude HAIKU_TOP src add-ons kernel drivers network wlan broadcomfullmac ;
+SubInclude HAIKU_TOP src add-ons kernel drivers network wlan aic8800 ;
 SubInclude HAIKU_TOP src add-ons kernel drivers network wlan iaxwifi200 ;
 SubInclude HAIKU_TOP src add-ons kernel drivers network wlan idualwifi7260 ;

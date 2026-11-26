@@ -703,3 +703,21 @@ Lite's sdio1, so that the bus manager sends the chip's first CMD5, the card enum
 0xc8a1 / 0x0082 is AICSemi's AIC8800D80 SDIO ID. One "data error at end, RINTSTS 0x8088"
 appears on the first 1-bit CMD53, before the bus-width switch. It's harmless so far and low
 priority.
+
+## AIC8800D80 driver (aic8800), milestone 1 "fw up" (pending, not yet run on hardware)
+
+New driver src/add-ons/kernel/drivers/network/wlan/aic8800/ (GPL-2.0), ported from the Linux
+aic8800 RFC v4 (linux-wireless, 2026-08-29), on the OpenBSD net80211 glue like broadcomfullmac.
+What another port needs to know about the D80's SDIO protocol (details in the driver README):
+- SDIO v3 register map on fn1: 0x00 interrupt enable, 0x01 pending, 0x03 free firmware buffers
+  (1536 bytes each), 0x04 blocks waiting (120 = byte mode), 0x0F read FIFO, 0x10 write FIFO.
+- Every host message is padded up to whole 512-byte blocks and carries a CRC-8 (poly 0x107) of
+  its first 3 header bytes; firmware replies come back aggregated in the read FIFO.
+- Boot: read 0x40500000 (revision in bits 21:16, U02 = 3), upload fmacfw to 0x120000 in 1 KB
+  block writes, write the patch table, DBG_START_APP 0x120000 (auto), then MM_* requests.
+- The first version polls fn1 0x04 rather than using the SDIO card interrupt.
+- The shared OpenBSD sdmmc shim (broadcomfullmac/dev/sdmmc/sdmmc_io_haiku.c) now takes its log
+  tag from SDMMC_TAG, so a second driver can build it (aic8800/aic_sdmmc_io.c).
+Firmware is never shipped (no AIC licence): it is loaded from
+/boot/system/non-packaged/data/firmware/aic8800/. Local test images add it at build time from
+a git-ignored UserBuildConfig only.

@@ -374,6 +374,15 @@ SYSTEM_ADD_ONS_DRIVERS_NET += [ FFilterByBuildFeatures
 	}@ # riscv64
 ] ;
 
+# Beacon: VisionFive 2 Lite onboard Wi-Fi (AIC8800D80, SDIO), Linux aic8800
+# port. Ships NO firmware (no redistribution licence); it is loaded from
+# /boot/system/non-packaged/data/firmware/aic8800/ if the user puts it there.
+SYSTEM_ADD_ONS_DRIVERS_NET += [ FFilterByBuildFeatures
+	riscv64 @{
+		aic8800
+	}@ # riscv64
+] ;
+
 SYSTEM_ADD_ONS_DRIVERS_POWER = [ FFilterByBuildFeatures
 	x86,x86_64 @{
 		acpi_button

@@ -1,0 +1,32 @@
+SubDir HAIKU_TOP src add-ons kernel drivers network wlan aic8800 ;
+
+# Beacon: AICSemi AIC8800D80 FullMAC Wi-Fi on SDIO (VisionFive 2 Lite),
+# ported from the Linux aic8800 driver (GPL-2.0), on the OpenBSD wlan
+# compatibility layer. See README.md and THIRD_PARTY.md.
+#
+# No firmware is shipped: the AIC firmware has no redistribution licence.
+# The driver loads it from /boot/system/non-packaged/data/firmware/aic8800/.
+
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat openbsd_network compat ] : true ;
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat openbsd_wlan ] : true ;
+UseHeaders [ FDirName $(HAIKU_TOP) src libs compat freebsd_network compat ] : true ;
+UsePrivateHeaders net system drivers ;
+UsePrivateKernelHeaders ;
+
+SubDirCcFlags [ FDefines _KERNEL=1 _XOPEN_SOURCE CONFIG_RWNX_FULLMAC ]
+	-Wno-unused -Wno-sign-compare ;
+
+UseHeaders [ FDirName $(SUBDIR) ] : true ;
+# the shared OpenBSD sdmmc shim (dev/sdmmc/sdmmcvar.h, sdmmc_io_haiku.c)
+UseHeaders [ FDirName $(SUBDIR) $(DOTDOT) broadcomfullmac ] : true ;
+SEARCH_SOURCE += [ FDirName $(SUBDIR) $(DOTDOT) broadcomfullmac dev sdmmc ] ;
+
+KernelAddon aic8800 :
+	if_aic_sdio.c
+	aic_sdmmc_io.c
+	glue.c
+	:
+	openbsd_wlan.a
+	freebsd_sdio.a
+	libfreebsd_network.a
+	;
