@@ -439,7 +439,8 @@ target spec: docs/beacon/rust/.
 
 ## VisionFive 2 Lite: vendor U-Boot boots only from partition 3
 
-*Pending (not yet run on the board).* The StarFive SDK U-Boot for the
+*Confirmed on vf2lite-01/02: autoboot from mmc 0:3 on the VF2 Lite and from
+mmc 1:3 on the VisionFive 2 (8 GB).* The StarFive SDK U-Boot for the
 VisionFive 2 Lite (starfive-tech/u-boot JH7110_VisionFive2_devel,
 include/configs/starfive-visionfive2.h) has `bootpart=3`: `sdk_boot_env`
 imports `vf2_uEnv.txt` from partition 3 and runs `${boot2}`;
@@ -452,7 +453,8 @@ with U-Boot's device tree. Boards that read partition 1 ignore it.
 
 ## VisionFive 2 Lite: vendor DT says only "starfive,jh7110s"
 
-*Pending.* The Lite's vendor U-Boot DT (starfive_visionfive2_lite.dts) has
+*Confirmed on vf2lite-01 (VF2 Lite: Beacon splash and display replay
+show).* The Lite's vendor U-Boot DT (starfive_visionfive2_lite.dts) has
 root `compatible = "starfive,jh7110s"` only (mainline Linux lists
 `"starfive,jh7110s", "starfive,jh7110"`). The EFI loader keyed the uncached
 frame buffer alias (display engine does not snoop the L2) on
@@ -462,7 +464,8 @@ Fix: src/system/boot/platform/efi/arch/riscv64/arch_dtb.cpp also matches
 
 ## VisionFive 2 Lite: sdio0 is the microSD slot, GPIO62 is a USB switch
 
-*Pending.* dw_mmc fell back to pulsing GPIO62 (the Orange Pi RV Wi-Fi
+*Confirmed on vf2lite-02 (VF2 Lite boots from the microSD on sdio0).*
+dw_mmc fell back to pulsing GPIO62 (the Orange Pi RV Wi-Fi
 WL_REG_ON) on JH7110 sdio0 when the DT had no mmc-pwrseq. On the Lite sdio0
 is the 4-bit microSD slot and GPIO62 drives the USB0 switch
 (jh7110-starfive-visionfive-2-lite.dtsi). Fix: the fallback now applies only
@@ -472,7 +475,8 @@ Orange Pi RV gets. File: src/add-ons/kernel/busses/mmc/dw_mmc/kernel_interface.c
 ## VisionFive 2 Lite: kernel store fault at the RAM base (OpenSBI region)
 
 *Seen on the VF2 Lite with the Orange Pi RV image rv69 (serial log
-vf2lite-20261126-105630); fix pending a test.* The kernel panicked right
+vf2lite-20261126-105630). Fix confirmed on vf2lite-02: no panic on the Lite
+(4 GB) and the VisionFive 2 (8 GB) still reaches the desktop.* The kernel panicked right
 after the SBI version lines: storeAccessFault, tval 0xffffffff00000000
 (physMapBase = physical 0x40000000), in memset() clearing a fresh page.
 OpenSBI v1.2 sits at 0x40000000-0x4003ffff and is PMP-protected from
@@ -490,8 +494,8 @@ vendor DT, see the jh7110s entry above).
 
 ## riscv64 loader: physical memory ranges must stay sorted
 
-*Seen on the VF2 Lite with vf2lite-01 (serial vf2lite-20261126-113640); fix
-in vf2lite-02, pending.* After the firmware carve-out the first RAM range
+*Seen on the VF2 Lite with vf2lite-01 (serial vf2lite-20261126-113640).
+Fix confirmed on vf2lite-02 on the VF2 Lite and the VisionFive 2.* After the firmware carve-out the first RAM range
 was split and its tail (0x40200000-0x47f00000) appended last. The kernel
 takes physical_memory_range[0] as the RAM base (physMemBase,
 gVirtFromPhysOffset in arch_vm_translation_map.cpp), so it used 0x47f11000
