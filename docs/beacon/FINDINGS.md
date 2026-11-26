@@ -656,3 +656,26 @@ The SDIO bus manager then prints the card's CIS vendor and device IDs.
 - Firmware comes from /lib/firmware/aic8800_sdio: fmacfw_8800d80_u02.bin,
   fw_patch_8800d80_u02.bin, fw_adid_8800d80_u02.bin, lmacfw_rf_8800d80_u02.bin,
   calibmode_8800d80.bin. Its redistribution license is still to be found.
+
+**vf2lite-08 result (2026-11-26):** the module answers CMD5 with OCR 0x20ffff00 (2 I/O
+functions, no memory). That was the only answer it gave: after the bus manager's CMD0, CMD5
+timed out, the bus manager fell back to SD/MMC init, and so the CIS was never read. The
+"RCA: 1 Status: 520" line in the log belongs to sdio0, the SD card.
+
+The cause was the clock. U-Boot leaves sdio1's card clock at the reset-default divider 2,
+while U-Boot sets 8 for sdio0. With divider 2 the controller runs four times faster than the
+50 MHz the driver assumes, so the "400 kHz" init clock was really about 1.6 MHz and
+"25 MHz" about 100 MHz. vf2lite-09 forces divider 8 on the Lite's sdio1. Linux does the
+equivalent: it sets SDIO1_SDCARD to 50 MHz through assigned-clock-rates.
+
+**Firmware license (2026-11-26):** no license from AICSemi found.
+- deepin wrote on netdev on 2025-12-03 that the firmware's redistribution license "remains
+  unclear to date".
+- The AIC8800 SDIO FullMAC driver series posted to linux-wireless on 2026-07-23 (it covers
+  AIC8801, 8800DC and 8800D80) lists "firmware redistribution permission and the
+  corresponding linux-firmware submission are not yet available".
+- Radxa's Debian package marks all of src/*, including the firmware blobs, as GPL-2. That is
+  the packager's label; it isn't a grant from AIC, and binary-only blobs can't meet GPL terms
+  anyway.
+
+So Beacon must not ship these blobs in images for now.
