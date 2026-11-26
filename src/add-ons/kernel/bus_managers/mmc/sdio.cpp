@@ -866,6 +866,20 @@ SdioCard::SetBusClock(uint32 kilohertz)
 status_t
 SdioCard::Reset()
 {
+	// Beacon: snapshot the installed handlers BEFORE taking the bus.
+	// _DispatchInterrupts() takes fHandlerLock and then the bus; taking them
+	// the other way round here deadlocked the IRQ thread against the reset
+	// (seen on the Orange Pi RV: the Wi-Fi restart never returned and every
+	// later txctl timed out).
+	uint8 enable = 0;
+	{
+		MutexLocker locker(fHandlerLock);
+		for (uint8 function = 1; function <= 7; function++) {
+			if (fHandlers[function] != NULL)
+				enable |= 1 | (1 << function);
+		}
+	}
+
 	fBus->AcquireBus();
 	status_t status = fBus->PowerCycle();
 	if (status != B_OK) {
@@ -886,14 +900,6 @@ SdioCard::Reset()
 	if (status == B_OK) {
 		// The power cycle cleared CCCR INT_ENABLE; restore it for the
 		// functions whose handlers are still installed.
-		uint8 enable = 0;
-		{
-			MutexLocker locker(fHandlerLock);
-			for (uint8 function = 1; function <= 7; function++) {
-				if (fHandlers[function] != NULL)
-					enable |= 1 | (1 << function);
-			}
-		}
 		if (enable != 0)
 			_WriteByteLocked(0, SDIO_CCCR_INT_ENABLE, enable);
 	}

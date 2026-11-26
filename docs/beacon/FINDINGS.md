@@ -350,7 +350,7 @@ needed beyond the NetworkWatcher re-check above.
 
 ## Wi-Fi chip recovery without a reboot (AP6256 / BCM43456 over SDIO)
 
-*Pending (rv65).* On the Orange Pi RV the Wi-Fi chip sometimes (a) stops
+*Pending (rv65; restart path fixed in rv70, untested).* On the Orange Pi RV the Wi-Fi chip sometimes (a) stops
 answering on SDIO altogether: every CMD52/CMD53, even CCCR reads, times out;
 or (b) sends a stream of IF events (code 54) with its scans never finishing.
 Only a power cycle helped. Recovery now does what a power cycle does:
@@ -371,6 +371,39 @@ Only a power cycle helped. Recovery now does what a power cycle does:
   rv67 also restarts after 8 aborted scans (SCAN -> INIT) in a row with the
   interface up. Heavy packet loss without errors is not yet
   detected.
+
+**rv69 test (2026-11-26): the restart itself killed the chip.** After 8
+aborted scans the restart ran. The card was power-cycled and enumerated again
+("card ready: RCA 0x0001 ..."), and then nothing worked: every txctl timed
+out, "could not write MAC address" repeated, and no networks showed until a
+cold power-off. The serial log never shows "sdio: card reset and enumerated
+again" or any "chip restart ..." result line, so the restart thread never
+returned. Three bugs, all fixed in rv70:
+
+1. **Deadlock in `SdioCard::Reset()`.** It took the bus and then
+   `fHandlerLock`. The SDIO IRQ thread (`_DispatchInterrupts`) takes
+   `fHandlerLock` and then the bus, and it polls INT_PENDING all the time.
+   During the long re-enumeration the two threads locked each other out. The
+   bus stayed held for good, so every later txctl timed out. Fix: snapshot
+   the installed handlers under `fHandlerLock` *before* taking the bus.
+2. **Firmware was never downloaded again.** The restart cleared only the
+   net80211-level `sc_sc.sc_initialized`. The SDIO-level `sc_initialized`
+   stayed set, so `bwfm_sdio_preinit()` returned at once, and the freshly
+   powered chip got no firmware or NVRAM. Fix: clear it, plus the cached
+   backplane window (`sc_bar0`, otherwise chip setup would skip programming
+   the window on a reset chip), the save/restore and clock state, the console
+   address and the TX credit window, all before chip setup runs again. On
+   the second run preinit skips establishing the interrupt hook and bus
+   thread again (they still exist), and goes straight to enabling the card
+   interrupt. With the interface down, the firmware is now still reloaded.
+3. **Power-off too short for a real restart.** The recovery pulse on
+   WL_REG_ON (GPIO 62) is now 200 ms low and then 150 ms before CMD5 (was
+   50 ms / 10 ms), so the chip's internal supplies drain and its boot ROM is
+   up. The boot-time fallback keeps the short pulse.
+
+A warm reset (reset button) after the deadlock left the chip with the old
+firmware wedged. A cold power-off cleared it. Whether a clean warm reset
+still brings the chip up is part of the rv70 test.
 
 ## Boot splash shown twice (JH7110)
 

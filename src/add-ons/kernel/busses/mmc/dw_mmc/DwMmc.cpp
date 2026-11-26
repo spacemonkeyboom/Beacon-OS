@@ -66,6 +66,11 @@ static const uint32 kBlockSize = 512;
 // the reset longer so a chip left running by a previous boot fully resets.
 static const bigtime_t kSdioResetHold = 50000;
 static const uint32 kSdioMinPostDelayMs = 10;
+// Recovery (chip restart at run time): hold WL_REG_ON low long enough for the
+// chip's internal regulators to drain, and give the chip time to start its
+// boot ROM before CMD5, like Linux boards with post-power-on-delay-ms.
+static const bigtime_t kSdioRecoveryResetHold = 200000;
+static const uint32 kSdioRecoveryPostDelayMs = 150;
 // CMD5 inquiry retries after releasing the reset, 20 ms apart.
 static const int kSdioProbeTries = 25;
 // SDIO CCCR ABORT register and its RES (I/O reset) bit.
@@ -1298,15 +1303,18 @@ DwMmcHost::_SdioPowerSequence(const char* why)
 		return;
 
 	bool assertLevel = !fConfig.resetActiveLow;
-	uint32 postDelay = fConfig.resetPostDelayMs > kSdioMinPostDelayMs
-		? fConfig.resetPostDelayMs : kSdioMinPostDelayMs;
+	bool recovery = strcmp(why, "recovery") == 0;
+	bigtime_t hold = recovery ? kSdioRecoveryResetHold : kSdioResetHold;
+	uint32 minPost = recovery ? kSdioRecoveryPostDelayMs : kSdioMinPostDelayMs;
+	uint32 postDelay = fConfig.resetPostDelayMs > minPost
+		? fConfig.resetPostDelayMs : minPost;
 	SDIO_INFO("%s: power sequence (%s): GPIO%" B_PRId32 " reset asserted "
 		"(%s) for %" B_PRId64 " ms, then released, then %" B_PRIu32 " ms\n",
 		fConfig.name, why, fConfig.resetGpio, assertLevel ? "HIGH" : "LOW",
-		kSdioResetHold / 1000, postDelay);
+		hold / 1000, postDelay);
 
 	fGpio->SetOutput(fConfig.resetGpio, assertLevel);
-	snooze(kSdioResetHold);
+	snooze(hold);
 	fGpio->SetOutput(fConfig.resetGpio, !assertLevel);
 	snooze(postDelay * 1000);
 

@@ -541,6 +541,11 @@ bwfm_sdio_preinit(struct bwfm_softc *bwfm)
 		bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR, clk);
 	}
 
+	/* Beacon: after a chip restart the interrupt hook and the bus thread
+	 * are still in place (SdioCard::Reset() restores CCCR IEN). */
+	if (sc->sc_ih != NULL)
+		goto intr_ready;
+
 #if defined(__HAVE_FDT)
 	if (sc->sc_sc.sc_node) {
 		sc->sc_ih = fdt_intr_establish(sc->sc_sc.sc_node,
@@ -580,6 +585,7 @@ bwfm_sdio_preinit(struct bwfm_softc *bwfm)
 		bwfm_sdio_clkctl(sc, CLK_NONE, 0);
 		goto err;
 	}
+intr_ready:
 	sdmmc_intr_enable(sc->sc_sf[1]);
 	rw_exit(sc->sc_lock);
 
@@ -899,8 +905,21 @@ bwfm_sdio_restart_thread(void *arg)
 	ml_purge(&sc->sc_tx_queue);
 	sc->sc_tx_count = 0;
 	sc->sc_tx_seq = 0xff;
+	sc->sc_tx_max_seq = 0;
 	bwfm_chip_detach(&sc->sc_sc);
 	error = sdmmc_io_reset_card(&sc->sc_sdmmc);
+	/* Beacon: the power cycle wiped the chip. Forget everything cached
+	 * about it before touching the backplane again, so chip setup programs
+	 * the window and bwfm_init() -> bwfm_sdio_preinit() really downloads the
+	 * firmware and NVRAM again (before, the SDIO-level sc_initialized stayed
+	 * set, preinit returned at once and every txctl went to a chip with no
+	 * firmware). */
+	sc->sc_initialized = 0;
+	sc->sc_bar0 = 0xffffffff;	/* backplane window: unknown */
+	sc->sc_sr_enabled = 0;
+	sc->sc_alp_only = 0;
+	sc->sc_console_addr = 0;
+	sc->sc_clkstate = CLK_NONE;
 	if (error == 0)
 		error = bwfm_sdio_chip_setup(sc);
 	rw_exit(sc->sc_lock);
@@ -916,9 +935,14 @@ bwfm_sdio_restart_thread(void *arg)
 		return B_OK;
 	}
 
+	printf("%s: chip restart: card back, reloading the firmware\n",
+	    DEVNAME(sc));
 	mtx_lock(&Giant);
 	if (ifp->if_flags & IFF_UP)
 		bwfm_init(ifp);	/* firmware, settings, then scan and rejoin */
+	else if (sc->sc_sc.sc_bus_ops->bs_preinit(&sc->sc_sc) == 0
+	    && bwfm_preinit(&sc->sc_sc) == 0)
+		sc->sc_sc.sc_initialized = 1;	/* firmware back, interface down */
 	mtx_unlock(&Giant);
 	if (sc->sc_sc.sc_initialized) {
 		sc->sc_restart_failures = 0;
