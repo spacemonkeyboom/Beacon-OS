@@ -225,10 +225,15 @@ DwMmcHost::_CheckJh7110Clocks()
 		outOfReset ? "out of reset" : "IN RESET");
 
 	if (fConfig.liteSdio1 && ((ahb & kJh7110ClkEnable) == 0
-			|| (card & kJh7110ClkEnable) == 0 || !outOfReset)) {
+			|| (card & kJh7110ClkEnable) == 0 || !outOfReset
+			|| (card & kJh7110ClkDivMask) != kLiteSdcardDivider)) {
 		// Beacon (VisionFive 2 Lite): sdio1 is disabled in the vendor DT,
-		// so U-Boot may leave it gated and in reset. Turn it on ourselves,
-		// as Linux's clock and reset drivers would for mmc1.
+		// so U-Boot may leave it gated, in reset, or at the reset-default
+		// card clock divider 2. With divider 2 the controller clock is four
+		// times the 50 MHz the driver assumes (vf2lite-08: CMD5 answered
+		// once at the "400 kHz" that was really ~1.6 MHz, then timed out).
+		// Linux sets SDIO1_SDCARD to 50 MHz (assigned-clock-rates); use
+		// divider 8, as U-Boot programs for sdio0 on the same board.
 		area = map_physical_memory("jh7110 syscrg (dw_mmc lite sdio1)",
 			kJh7110SysCrgBase, B_PAGE_SIZE, B_ANY_KERNEL_ADDRESS,
 			B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &crg);
@@ -236,8 +241,7 @@ DwMmcHost::_CheckJh7110Clocks()
 			clocks = (volatile uint32*)crg;
 			clocks[kJh7110SysClkSdio0Ahb + index] |= kJh7110ClkEnable;
 			uint32 cardReg = clocks[kJh7110SysClkSdio0Card + index];
-			if ((cardReg & kJh7110ClkDivMask) == 0)
-				cardReg |= 8;	// axi_cfg0 / 8, as on the other boards
+			cardReg = (cardReg & ~kJh7110ClkDivMask) | kLiteSdcardDivider;
 			clocks[kJh7110SysClkSdio0Card + index] = cardReg | kJh7110ClkEnable;
 			volatile uint32* assertWord
 				= &clocks[(kJh7110SysRstAssert / 4) + resetBit / 32];
@@ -252,7 +256,7 @@ DwMmcHost::_CheckJh7110Clocks()
 			card = clocks[kJh7110SysClkSdio0Card + index];
 			outOfReset = (resetStatus & (1u << (resetBit % 32))) != 0;
 			delete_area(area);
-			INFO("%s: VF2 Lite: turned sdio1 on: ahb %#" B_PRIx32 ", sdcard %#"
+			INFO("%s: VF2 Lite: set up sdio1 clocks: ahb %#" B_PRIx32 ", sdcard %#"
 				B_PRIx32 ", AHB %s\n", fConfig.name, ahb, card,
 				outOfReset ? "out of reset" : "STILL IN RESET");
 		}

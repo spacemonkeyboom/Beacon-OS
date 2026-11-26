@@ -232,6 +232,7 @@ enum {
 	// bit set = out of reset (Linux reset-starfive-jh7110.c, jh71x0.c).
 	kJh7110SysRstStatus		= 0x308,
 	kJh7110SysRstAssert		= 0x2f8,	// bit set = held in reset
+	kLiteSdcardDivider		= 8,		// axi_cfg0 / 8 = 50 MHz
 	kJh7110SysRstSdio0Ahb	= 64,
 	kJh7110Sdio0Base		= 0x16010000,
 	kJh7110Sdio1Base		= 0x16020000,
