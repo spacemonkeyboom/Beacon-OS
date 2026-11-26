@@ -487,3 +487,16 @@ src/system/boot/platform/efi/dtb.cpp, dtb.h, arch/riscv64/arch_mmu.cpp.
 The same log showed the Lite's U-Boot looking only at mmc 0:3 (see the
 partition 3 entry above) and a black screen (no "starfive,jh7110" in the
 vendor DT, see the jh7110s entry above).
+
+## riscv64 loader: physical memory ranges must stay sorted
+
+*Seen on the VF2 Lite with vf2lite-01 (serial vf2lite-20261126-113640); fix
+in vf2lite-02, pending.* After the firmware carve-out the first RAM range
+was split and its tail (0x40200000-0x47f00000) appended last. The kernel
+takes physical_memory_range[0] as the RAM base (physMemBase,
+gVirtFromPhysOffset in arch_vm_translation_map.cpp), so it used 0x47f11000
+while the physical map started at 0x40200000: every physical-map access was
+off, and the first fault died in STrap -> VMAddressSpace::GetKernel()
+(NULL+0x54, no address space yet). Fix: sort the physical memory and
+allocated range lists after all removals, before computing the physical
+map. File: src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp.
