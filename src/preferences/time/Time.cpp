@@ -15,6 +15,8 @@
 
 #include <locale.h>
 #include <stdio.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <AboutWindow.h>
@@ -104,53 +106,38 @@ TimeApplication::MessageReceived(BMessage* message)
 }
 
 
-// Beacon: one NTP attempt with a time limit. The attempt runs in its own
-// thread; if it hangs (blocked DNS lookup or socket), it is abandoned and
-// left behind; the process exits when the boot job ends.
-struct TimedUpdate {
-	Settings*	settings;
-	const char*	errorString;
-	int32		errorCode;
-	status_t	status;
-};
-
-
+/*!	Beacon: one boot sync attempt in a child process ("Time --update"),
+	killed after \a timeout. A thread was not enough: an attempt stuck in
+	the resolver kept its lock, so every later attempt in the same process
+	hung too, while a fresh process synced at once.
+*/
 static status_t
-timed_update_thread(void* data)
+child_update_time(const char* self, bigtime_t timeout)
 {
-	TimedUpdate* update = (TimedUpdate*)data;
-	update->status = update_time(*update->settings, &update->errorString,
-		&update->errorCode);
-	return B_OK;
-}
-
-
-static status_t
-timed_update_time(Settings& settings, bigtime_t timeout,
-	const char** _errorString, int32* _errorCode)
-{
-	// Leaked on purpose if the thread hangs: it may still write to it.
-	TimedUpdate* update = new TimedUpdate{&settings, NULL, 0, B_ERROR};
-	thread_id thread = spawn_thread(timed_update_thread, "ntp attempt",
-		B_NORMAL_PRIORITY, update);
-	if (thread < 0) {
-		delete update;
-		return update_time(settings, _errorString, _errorCode);
+	pid_t child = fork();
+	if (child < 0)
+		return B_ERROR;
+	if (child == 0) {
+		execl(self, self, "--update", (char*)NULL);
+		_exit(127);
 	}
-	resume_thread(thread);
-	status_t exitValue;
-	status_t result = wait_for_thread_etc(thread, B_RELATIVE_TIMEOUT, timeout,
-		&exitValue);
-	if (result != B_OK) {
-		*_errorString = "NTP attempt timed out";
-		*_errorCode = 0;
-		return B_TIMED_OUT;
+	bigtime_t deadline = system_time() + timeout;
+	while (true) {
+		int childStatus = 0;
+		pid_t done = waitpid(child, &childStatus, WNOHANG);
+		if (done == child) {
+			return WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0
+				? B_OK : B_ERROR;
+		}
+		if (done < 0)
+			return B_ERROR;
+		if (system_time() >= deadline) {
+			kill(child, SIGKILL);
+			waitpid(child, &childStatus, 0);
+			return B_TIMED_OUT;
+		}
+		snooze(200000);
 	}
-	*_errorString = update->errorString;
-	*_errorCode = update->errorCode;
-	status_t status = update->status;
-	delete update;
-	return status;
 }
 
 
@@ -187,8 +174,10 @@ main(int argc, char** argv)
 				attempt++) {
 			if (attempt > 0)
 				snooze(attempt < 5 ? 2000000 : 10000000);
-			status = timed_update_time(settings, 15000000, &errorString,
-				&errorCode);
+			status = child_update_time(argv[0], 15000000);
+			errorString = status == B_TIMED_OUT ? "NTP attempt timed out"
+				: "NTP attempt failed";
+			errorCode = 0;
 			if (status == B_OK)
 				break;
 		}
@@ -204,6 +193,11 @@ main(int argc, char** argv)
 			printf("The following error occurred while synchronizing:\n%s\n",
 				errorString);
 		}
+
+		// Beacon: --update reports failure in its exit code (the boot job
+		// runs it as a child process, see child_update_time()).
+		if (!bootUpdate)
+			return status == B_OK ? 0 : 1;
 
 		// Beacon: after the first network time sync (New York by default),
 		// open Time preferences on the Time zone tab, once.

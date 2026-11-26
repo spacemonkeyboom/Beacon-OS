@@ -391,3 +391,13 @@ back to the SSID of the node net80211 chose and logs every join ("connect:
 join sent (N)") so the next log shows which step fails. rv63 shows the same
 bug, so it predates the chip-recovery work. A warm reboot did not clear a
 chip that got no ACKs from the AP; unplugging power did.
+
+## Boot time sync never succeeded after one hung attempt
+
+*Fix tested by hand on rv68.* The b46bed6f70 fix ran each NTP attempt in a
+thread with a 15 s limit. Once one attempt hung in the resolver, every later
+attempt in the same process hung too (the stuck thread kept the resolver's
+lock), so the clock stayed at 1970 while `Time --update` from a shell synced
+at once. Each boot attempt now runs as a child process (`Time --update`,
+killed after 15 s), and `--update` exits 1 on failure. Run from ~ on the
+board: boot-style sync done in 1.4 s.
