@@ -16,6 +16,33 @@ trademarks of RISC-V International; Beacon is not affiliated with them.
 
 Development is AI-assisted.
 
+## 🎉 BEACON NOW RUNS ON THREE RISC-V BOARDS! 🎉
+
+# ✅ Orange Pi RV  ✅ VisionFive 2  ✅ VisionFive 2 Lite
+
+**November 26, 2026:** Beacon boots to the desktop on the **StarFive
+VisionFive 2** and the **VisionFive 2 Lite**, as well as the **Orange Pi RV**.
+**One SD card image** boots both StarFive boards and starts on its own, with
+no changes to the boards' firmware.
+
+| Board | Status |
+|---|---|
+| Orange Pi RV (JH7110) | Desktop, USB, Wi-Fi, audio, WebPositive |
+| VisionFive 2 (JH7110) | Desktop, USB keyboard and mouse |
+| VisionFive 2 Lite (JH7110S) | Desktop; USB driver in progress |
+
+What it took: a boot partition the StarFive firmware finds by itself,
+keeping the firmware's own memory out of the kernel's hands (the Lite's
+firmware does not mark it reserved), and recognising the JH7110S. Details in
+[docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md).
+
+## 🦀 RUST RUNS ON RISC-V BEACON
+
+Rust 1.100 now has a built-in `riscv64gc-unknown-haiku` target. The standard
+library passes threads, files, networking and unwinding tests on the board.
+This is the first step toward **Firefox on RISC-V Beacon**. See
+[docs/beacon/rust](docs/beacon/rust).
+
 ## Screenshots
 
 Beacon 0.4 running WebPositive on an Orange Pi RV (8 GB), captured on the board itself:
