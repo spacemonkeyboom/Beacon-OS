@@ -14,6 +14,7 @@
 | beacon-wallpaper-10.bmp | AI-generated with Grok (xAI), supplied by the Beacon maintainer; no real person depicted | 2026-11-25 | 1792x1008; converted to BMP (JPEG metadata dropped) |
 | beacon-wallpaper-11.bmp | AI-generated with Grok (xAI), supplied by the Beacon maintainer; no real person depicted | 2026-11-26 | 1792x1008, snowy mountain camp with tents; converted to BMP (JPEG and C2PA metadata dropped) |
 | beacon-wallpaper-12.bmp | AI-generated with Grok (xAI), supplied by the Beacon maintainer; no real person depicted | 2026-11-26 | 1792x1008, camper vans in the snow; the vans carry Volkswagen badges, kept at the maintainer's choice (no endorsement by or affiliation with Volkswagen implied); converted to BMP (JPEG and C2PA metadata dropped) |
+| beacon-wallpaper-13.bmp | AI-generated with Grok (xAI), supplied by the Beacon maintainer; no real person depicted | 2026-11-26 | 1792x1008, abstract red/blue/yellow geometric shapes; converted to BMP (JPEG and C2PA metadata dropped) |
 | beacon-wallpaper-christmas.bmp | supplied by the Beacon maintainer | 2026-11-25 | holiday wallpaper; converted to BMP (JPEG metadata dropped) |
 | beacon-wallpaper-christmas-2.bmp | supplied by the Beacon maintainer | 2026-11-25 | holiday wallpaper, second variant; converted to BMP (JPEG metadata dropped) |
 
