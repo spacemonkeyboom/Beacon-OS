@@ -17,3 +17,15 @@ The binary carries PT_INTERP /lib/ld.so.1 (gcc's default for -pie); Haiku
 ignores it and uses runtime_loader. Next: a built-in riscv64gc-unknown-haiku
 target in rustc and a rust-std build for it, so ordinary builds (Firefox's)
 can use `--target riscv64gc-unknown-haiku` without build-std.
+
+## Built-in target (Rust 1.100.0)
+
+`rust-1.100.0-riscv64-haiku.patch` adds `riscv64gc-unknown-haiku` to rustc
+(new file targets/riscv64gc_unknown_haiku.rs, registered in spec/mod.rs, and
+listed in bootstrap's STAGE0_MISSING_TARGETS). Build with `bootstrap.toml`
+(`x.py dist rustc rust-std`; ~2.5 h on the laptop with 3 jobs). The C
+compiler and linker wrappers add `--sysroot` (a Haiku riscv64 sysroot), or
+compiler-rt fails on `#include_next <limits.h>`. Cargo's dist build needs host
+OpenSSL headers; the official cargo 1.100.0 binary works instead.
+Confirmed on the board: stdtest all PASS with a normal
+`cargo build --target riscv64gc-unknown-haiku`.

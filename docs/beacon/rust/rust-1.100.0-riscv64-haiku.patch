@@ -1,0 +1,51 @@
+--- rustc-1.100.0-src/compiler/rustc_target/src/spec/mod.rs	2026-11-09 17:11:55.000000000 -0500
++++ ../rustc-1.100.0-src/compiler/rustc_target/src/spec/mod.rs	2026-11-26 06:38:54.838843070 -0500
+@@ -1414,6 +1414,7 @@
+ 
+     ("i686-unknown-haiku", i686_unknown_haiku),
+     ("x86_64-unknown-haiku", x86_64_unknown_haiku),
++    ("riscv64gc-unknown-haiku", riscv64gc_unknown_haiku),
+ 
+     ("aarch64-unknown-helenos", aarch64_unknown_helenos),
+     ("i686-unknown-helenos", i686_unknown_helenos),
+--- rustc-1.100.0-src/src/bootstrap/src/core/sanity.rs	2026-11-09 17:11:55.000000000 -0500
++++ ../rustc-1.100.0-src/src/bootstrap/src/core/sanity.rs	2026-11-26 06:39:15.163005552 -0500
+@@ -36,6 +36,7 @@
+ /// when the newly-bumped stage 0 compiler now knows about the formerly-missing targets.
+ const STAGE0_MISSING_TARGETS: &[&str] = &[
+     // just a dummy comment so the list doesn't get onelined
++    "riscv64gc-unknown-haiku", // Beacon
+ ];
+ 
+ /// Minimum version threshold for libstdc++ required when using prebuilt LLVM
+--- /dev/null	2026-11-19 20:49:49.877439890 -0500
++++ ../rustc-1.100.0-src/compiler/rustc_target/src/spec/targets/riscv64gc_unknown_haiku.rs	2026-11-26 06:38:54.818842913 -0500
+@@ -0,0 +1,28 @@
++// Beacon: 64-bit RISC-V Haiku (the Beacon OS riscv64 port).
++use crate::spec::{Arch, CodeModel, LlvmAbi, Target, TargetMetadata, base};
++
++pub(crate) fn target() -> Target {
++    let mut base = base::haiku::opts();
++    base.code_model = Some(CodeModel::Medium);
++    base.cpu = "generic-rv64".into();
++    base.features = "+m,+a,+f,+d,+c,+zicsr,+zifencei".into();
++    base.llvm_abiname = LlvmAbi::Lp64d;
++    base.max_atomic_width = Some(64);
++    base.plt_by_default = false;
++    // Haiku executables are position independent (as on x86_64)
++    base.position_independent_executables = true;
++
++    Target {
++        llvm_target: "riscv64-unknown-haiku".into(),
++        metadata: TargetMetadata {
++            description: Some("64-bit RISC-V Haiku".into()),
++            tier: Some(3),
++            host_tools: Some(false),
++            std: Some(true),
++        },
++        pointer_width: 64,
++        data_layout: "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128".into(),
++        arch: Arch::RiscV64,
++        options: base,
++    }
++}
