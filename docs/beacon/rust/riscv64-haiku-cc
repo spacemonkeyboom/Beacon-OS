@@ -1,0 +1,3 @@
+#!/bin/sh
+# Beacon: linker wrapper for riscv64gc-unknown-haiku (adds the Haiku sysroot)
+exec $HOME/beacon/haiku/generated.riscv64/cross-tools-riscv64/bin/riscv64-unknown-haiku-gcc --sysroot=$HOME/beacon/qt5/sysroot "$@"
