@@ -14,6 +14,7 @@
 #include <efi/boot-services.h>
 #include <string.h>
 
+#include "dtb.h"
 #include "efi_platform.h"
 #include "generic_mmu.h"
 #include "mmu.h"
@@ -357,6 +358,18 @@ fix_memory_map_for_m_mode(size_t memoryMapSize, efi_memory_descriptor* memoryMap
 }
 
 
+// Beacon: keep firmware memory away from the kernel.
+static void
+reserve_firmware_range(uint64 start, uint64 size)
+{
+	uint64 end = ROUNDUP(start + size, B_PAGE_SIZE);
+	start = ROUNDDOWN(start, B_PAGE_SIZE);
+	remove_physical_memory_range(start, end - start);
+	dprintf("firmware range %#" B_PRIx64 "-%#" B_PRIx64 " removed from RAM\n",
+		start, end);
+}
+
+
 uint64
 arch_mmu_generate_post_efi_page_tables(size_t memoryMapSize, efi_memory_descriptor* memoryMap,
 	size_t descriptorSize, uint32_t descriptorVersion)
@@ -387,6 +400,30 @@ arch_mmu_generate_post_efi_page_tables(size_t memoryMapSize, efi_memory_descript
 		remove_physical_allocated_range(fbStart, fbEnd - fbStart);
 		dprintf("frame buffer %#" B_PRIx64 "-%#" B_PRIx64 " removed from RAM\n",
 			fbStart, fbEnd);
+	}
+
+	// Beacon: honour the device tree's reserved regions, and always keep the
+	// first 2 MiB of RAM: RISC-V SBI firmware (OpenSBI fw_dynamic) lives
+	// there, below the usual kernel load address, and is PMP-protected. The
+	// VisionFive 2 Lite U-Boot reports it as boot services data, and the
+	// kernel faulted on its first store there (storeAccessFault, physical
+	// RAM base).
+	dtb_get_reserved_memory(reserve_firmware_range);
+	if (gKernelArgs.num_physical_memory_ranges > 0) {
+		uint64 ramBase = gKernelArgs.physical_memory_range[0].start;
+		for (size_t i = 1; i < gKernelArgs.num_physical_memory_ranges; i++)
+			ramBase = std::min(ramBase, gKernelArgs.physical_memory_range[i].start);
+		uint64 fwStart = ROUNDDOWN(ramBase, 0x200000);
+		bool overlaps = false;
+		for (size_t i = 0; i < gKernelArgs.num_physical_allocated_ranges; i++) {
+			const addr_range& r = gKernelArgs.physical_allocated_range[i];
+			if (r.start < fwStart + 0x200000 && r.start + r.size > fwStart)
+				overlaps = true;
+		}
+		if (!overlaps)
+			reserve_firmware_range(fwStart, 0x200000);
+		else
+			dprintf("first 2 MiB of RAM in use by the loader, not reserved\n");
 	}
 
 	addr_range physMemRange;
