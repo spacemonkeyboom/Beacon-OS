@@ -397,9 +397,15 @@ returned. Three bugs, all fixed in rv70:
    thread again (they still exist), and goes straight to enabling the card
    interrupt. With the interface down, the firmware is now still reloaded.
 3. **Power-off too short for a real restart.** The recovery pulse on
-   WL_REG_ON (GPIO 62) is now 200 ms low and then 150 ms before CMD5 (was
+   WL_REG_ON (GPIO 62) is now 1 s low and then 200 ms before CMD5 (was
    50 ms / 10 ms), so the chip's internal supplies drain and its boot ROM is
-   up. The boot-time fallback keeps the short pulse.
+   up. The boot-time fallback keeps the short pulse. The user saw the
+   wedged module survive a ~30 s power-off and recover only after a longer
+   one. The RV cannot switch the module's supply: in the Linux DT, vmmc is
+   `vcc3v3-pcie`, "always on by hardware", and vqmmc is the shared
+   `vcc_3v3`. So WL_REG_ON is the only software reset. The AXP15060 is left
+   alone. A serial dongle can also back-feed the board through its UART
+   pins during a "power-off".
 
 A warm reset (reset button) after the deadlock left the chip with the old
 firmware wedged. A cold power-off cleared it. Whether a clean warm reset

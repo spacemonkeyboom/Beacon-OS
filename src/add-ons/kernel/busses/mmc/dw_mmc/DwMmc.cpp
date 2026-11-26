@@ -68,9 +68,12 @@ static const bigtime_t kSdioResetHold = 50000;
 static const uint32 kSdioMinPostDelayMs = 10;
 // Recovery (chip restart at run time): hold WL_REG_ON low long enough for the
 // chip's internal regulators to drain, and give the chip time to start its
-// boot ROM before CMD5, like Linux boards with post-power-on-delay-ms.
-static const bigtime_t kSdioRecoveryResetHold = 200000;
-static const uint32 kSdioRecoveryPostDelayMs = 150;
+// boot ROM before CMD5, like Linux boards with post-power-on-delay-ms. On the
+// Orange Pi RV the module's supply (vcc3v3-pcie) is always on and cannot be
+// switched, so WL_REG_ON is the only reset; a wedged AP6256 survived short
+// power cuts there, so hold it a full second.
+static const bigtime_t kSdioRecoveryResetHold = 1000000;
+static const uint32 kSdioRecoveryPostDelayMs = 200;
 // CMD5 inquiry retries after releasing the reset, 20 ms apart.
 static const int kSdioProbeTries = 25;
 // SDIO CCCR ABORT register and its RES (I/O reset) bit.
