@@ -563,7 +563,7 @@ DT), so usb_125m needs div 8; the driver computes it from the PLL registers.
 
 ## VisionFive 2: USB "over current" on every port after the partition-3 autoboot
 
-**Status:** suspected cause found, fix in vf2lite-07, waiting for a hardware test.
+**Status:** CONFIRMED on the VisionFive 2 with vf2lite-07 (2026-11-26). Autoboot log shows "Port link up" from pci enum, 3 devices connected, 0 over-current, and keyboard and mouse work. Lite check pending.
 
 **Symptom:** on the full VisionFive 2, vf2lite-02/05/06 reported root port 2 and hub 7
 ports 0-3 "in an over current state". Only hub 2 port 0 connected, and there was no
