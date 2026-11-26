@@ -344,6 +344,8 @@ dtb_has_fdt_string(const char* prop, int size, const char* pattern)
 }
 
 
+bool dtb_get_reg(const void* fdt, int node, size_t idx, addr_range& range);
+
 // Beacon: firmware regions the kernel must never touch. U-Boot normally
 // carves these out of the EFI memory map itself, but the VisionFive 2 Lite
 // SDK U-Boot reports the OpenSBI region as EfiBootServicesData.
