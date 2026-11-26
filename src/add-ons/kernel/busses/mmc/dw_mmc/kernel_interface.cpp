@@ -104,6 +104,57 @@ has_compatible(fdt_device_module_info* module, fdt_device* device,
 }
 
 
+/*!	Beacon: true if the DT root says this is a JH7110S / VisionFive 2 Lite
+	(the vendor U-Boot DT root compatible is just "starfive,jh7110s").
+*/
+static bool
+root_is_lite(device_node* node)
+{
+	device_node* root = NULL;
+	device_node* current = gDeviceManager->get_parent_node(node);
+	while (current != NULL) {
+		const char* bus;
+		if (gDeviceManager->get_attr_string(current, B_DEVICE_BUS, &bus,
+				false) != B_OK || strcmp(bus, "fdt") != 0) {
+			break;
+		}
+		if (root != NULL)
+			gDeviceManager->put_node(root);
+		root = current;
+		current = gDeviceManager->get_parent_node(current);
+	}
+	if (current != NULL)
+		gDeviceManager->put_node(current);
+	if (root == NULL)
+		return false;
+
+	bool lite = false;
+	fdt_device_module_info* module;
+	fdt_device* device;
+	if (get_fdt(root, module, device)) {
+		lite = has_compatible(module, device, "starfive,jh7110s")
+			|| has_compatible(module, device, "starfive,visionfive-2-lite")
+			|| has_compatible(module, device,
+				"starfive,visionfive-2-lite-emmc");
+	}
+	gDeviceManager->put_node(root);
+	return lite;
+}
+
+
+//! Beacon: the VF2 Lite's on-board Wi-Fi slot (sdio1, disabled in its DT).
+static bool
+is_lite_sdio1(device_node* node, fdt_device_module_info* module,
+	fdt_device* device)
+{
+	uint64 base = 0;
+	uint64 size = 0;
+	if (!module->get_reg(device, 0, &base, &size) || base != kJh7110Sdio1Base)
+		return false;
+	return root_is_lite(node);
+}
+
+
 // #pragma mark - driver hooks
 
 
@@ -133,8 +184,13 @@ dw_mmc_supports_device(device_node* parent)
 	int length = 0;
 	const char* okay = (const char*)module->get_prop(device, "status",
 		&length);
-	if (okay != NULL && strcmp(okay, "okay") != 0 && strcmp(okay, "ok") != 0)
+	if (okay != NULL && strcmp(okay, "okay") != 0 && strcmp(okay, "ok") != 0
+		&& !is_lite_sdio1(parent, module, device)) {
+		// Beacon: on the VF2 Lite the vendor DT disables sdio1, but the
+		// on-board Wi-Fi module sits there (Linux 6.12 vendor DT: mmc1,
+		// non-removable, gpio_wl_reg_on = GPIO33), so attach anyway.
 		return 0.0f;
+	}
 
 	// Beacon: SDIO-only slots (mmc-pwrseq, a wifi@ child node) attach too
 	// now; the MMC bus manager enumerates SDIO cards.
@@ -393,6 +449,19 @@ read_config(device_node* fdtNode, DwMmcConfig& config)
 	// DTs) and GPIO62 drives its USB0 switch, so never touch GPIO62 there.
 	config.isJh7110Sdio0 = config.isJh7110 && base == kJh7110Sdio0Base;
 	read_pwrseq(module, device, config);
+	if (config.isJh7110 && base == kJh7110Sdio1Base && !config.resetFromDt
+		&& is_lite_sdio1(fdtNode, module, device)) {
+		// Beacon (VisionFive 2 Lite): on-board AIC8800D80 Wi-Fi on sdio1.
+		// WL_REG_ON is GPIO33, high = on; the vendor Linux driver
+		// (dw_mmc-starfive.c) drives it low 10 ms, then high, then 10 ms.
+		config.liteSdio1 = true;
+		config.resetGpio = 33;
+		config.resetActiveLow = true;
+		config.resetFromDt = true;
+		config.resetHeuristic = false;
+		config.resetPostDelayMs = 50;
+		config.busWidth = 4;
+	}
 	if (config.isJh7110Sdio0 && !config.resetFromDt
 		&& config.busWidth == 8) {
 		config.resetGpio = 62;

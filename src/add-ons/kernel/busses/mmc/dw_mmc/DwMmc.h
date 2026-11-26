@@ -231,6 +231,7 @@ enum {
 	// Reset status: JH7110_SYSRST_SDIOx_AHB = 64/65, status words at 0x308,
 	// bit set = out of reset (Linux reset-starfive-jh7110.c, jh71x0.c).
 	kJh7110SysRstStatus		= 0x308,
+	kJh7110SysRstAssert		= 0x2f8,	// bit set = held in reset
 	kJh7110SysRstSdio0Ahb	= 64,
 	kJh7110Sdio0Base		= 0x16010000,
 	kJh7110Sdio1Base		= 0x16020000,
@@ -264,6 +265,7 @@ struct DwMmcConfig {
 	uint32			resetPostDelayMs;	// pwrseq post-power-on-delay-ms
 	uint32			maxKhzSetting;		// driver settings max_clock_khz
 	bool			isJh7110Sdio0;
+	bool			liteSdio1;		// VF2 Lite on-board Wi-Fi slot: pinmux
 };
 
 
@@ -353,6 +355,7 @@ private:
 			bool				_ProbeSdio(int tries);
 			void				_SdioPowerSequence(const char* why);
 			void				_SetupJh7110Gpio();
+			void				_SetupLiteSdio1Pins();
 			status_t			_ApplyClockEnable();
 
 private:

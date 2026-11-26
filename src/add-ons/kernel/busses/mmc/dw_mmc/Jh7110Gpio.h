@@ -72,6 +72,11 @@ public:
 			// then pad input/Schmitt/bias off (as Linux gpio direction_output
 			// does).
 			status_t		SetOutput(int pin, bool high);
+			// Route a pin to a peripheral: DOUT/DOEN sources, the input
+			// signal (din < 0: none) and the pad config (as Linux
+			// jh7110_set_gpiomux() plus pinconf).
+			status_t		SetMux(int pin, uint32 dout, uint32 doen, int din,
+								uint32 padcfg);
 			bool			GetInput(int pin);
 
 private:

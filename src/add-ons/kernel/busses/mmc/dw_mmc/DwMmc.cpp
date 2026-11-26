@@ -224,6 +224,40 @@ DwMmcHost::_CheckJh7110Clocks()
 		fConfig.name, resetStatus, index,
 		outOfReset ? "out of reset" : "IN RESET");
 
+	if (fConfig.liteSdio1 && ((ahb & kJh7110ClkEnable) == 0
+			|| (card & kJh7110ClkEnable) == 0 || !outOfReset)) {
+		// Beacon (VisionFive 2 Lite): sdio1 is disabled in the vendor DT,
+		// so U-Boot may leave it gated and in reset. Turn it on ourselves,
+		// as Linux's clock and reset drivers would for mmc1.
+		area = map_physical_memory("jh7110 syscrg (dw_mmc lite sdio1)",
+			kJh7110SysCrgBase, B_PAGE_SIZE, B_ANY_KERNEL_ADDRESS,
+			B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &crg);
+		if (area >= 0) {
+			clocks = (volatile uint32*)crg;
+			clocks[kJh7110SysClkSdio0Ahb + index] |= kJh7110ClkEnable;
+			uint32 cardReg = clocks[kJh7110SysClkSdio0Card + index];
+			if ((cardReg & kJh7110ClkDivMask) == 0)
+				cardReg |= 8;	// axi_cfg0 / 8, as on the other boards
+			clocks[kJh7110SysClkSdio0Card + index] = cardReg | kJh7110ClkEnable;
+			volatile uint32* assertWord
+				= &clocks[(kJh7110SysRstAssert / 4) + resetBit / 32];
+			*assertWord = *assertWord & ~(1u << (resetBit % 32));
+			for (int i = 0; i < 100; i++) {
+				resetStatus = clocks[(kJh7110SysRstStatus / 4) + resetBit / 32];
+				if ((resetStatus & (1u << (resetBit % 32))) != 0)
+					break;
+				spin(10);
+			}
+			ahb = clocks[kJh7110SysClkSdio0Ahb + index];
+			card = clocks[kJh7110SysClkSdio0Card + index];
+			outOfReset = (resetStatus & (1u << (resetBit % 32))) != 0;
+			delete_area(area);
+			INFO("%s: VF2 Lite: turned sdio1 on: ahb %#" B_PRIx32 ", sdcard %#"
+				B_PRIx32 ", AHB %s\n", fConfig.name, ahb, card,
+				outOfReset ? "out of reset" : "STILL IN RESET");
+		}
+	}
+
 	if ((ahb & kJh7110ClkEnable) == 0 || (card & kJh7110ClkEnable) == 0
 		|| !outOfReset) {
 		ERROR("%s: firmware left the controller gated or in reset; not "
@@ -392,6 +426,8 @@ DwMmcHost::Init(const DwMmcConfig& config)
 
 	// Beacon: SDIO power sequence (Wi-Fi reset GPIO) and pin logging.
 	_SetupJh7110Gpio();
+	if (fConfig.liteSdio1)
+		_SetupLiteSdio1Pins();
 	if (fConfig.resetGpio >= 0 && fConfig.resetFromDt)
 		_SdioPowerSequence("mmc-pwrseq in DT");
 
@@ -1384,6 +1420,39 @@ DwMmcHost::_SetupJh7110Gpio()
 		if (fConfig.resetGpio != 62 || !fConfig.isJh7110Sdio0)
 			fGpio->LogPin(fConfig.resetGpio, "SDIO reset");
 	}
+}
+
+
+/*!	Beacon (VisionFive 2 Lite): the vendor U-Boot DT disables sdio1, so
+	U-Boot never muxes its pins. Route them like the Linux mmc1_pins group
+	(jh7110-common.dtsi): CLK GPIO10, CMD GPIO9, DATA0-3 GPIO11, 12, 7, 8;
+	pull-up, 12 mA; data and CMD with input and Schmitt trigger on.
+	Signal numbers: jh7110-pinfunc.h (GPOUT_SYS_SDIO1_*, GPOEN_SYS_SDIO1_*,
+	GPI_SYS_SDIO1_*).
+*/
+void
+DwMmcHost::_SetupLiteSdio1Pins()
+{
+	if (fGpio == NULL)
+		return;
+	const uint32 ds12mA = 3 << 1;
+	const uint32 clkPad = kJh7110PadPu | ds12mA;
+	const uint32 ioPad = kJh7110PadIe | kJh7110PadSmt | kJh7110PadPu | ds12mA;
+	struct { int pin; uint32 dout; uint32 doen; int din; uint32 pad; } pins[] = {
+		{ 10, 55, kJh7110GpoenEnable, -1, clkPad },	// CLK
+		{  9, 57, 19, 44, ioPad },	// CMD
+		{ 11, 58, 20, 45, ioPad },	// DATA0
+		{ 12, 59, 21, 46, ioPad },	// DATA1
+		{  7, 60, 22, 47, ioPad },	// DATA2
+		{  8, 61, 23, 48, ioPad },	// DATA3
+	};
+	for (size_t i = 0; i < sizeof(pins) / sizeof(pins[0]); i++) {
+		fGpio->SetMux(pins[i].pin, pins[i].dout, pins[i].doen, pins[i].din,
+			pins[i].pad);
+		fGpio->LogPin(pins[i].pin, "VF2 Lite sdio1 (Wi-Fi)");
+	}
+	SDIO_INFO("%s: VF2 Lite: sdio1 pins muxed for the on-board Wi-Fi "
+		"(AIC8800D80 module expected), WL_REG_ON GPIO33\n", fConfig.name);
 }
 
 

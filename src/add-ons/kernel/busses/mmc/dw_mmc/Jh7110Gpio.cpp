@@ -178,6 +178,32 @@ Jh7110SysGpio::LogSd0Pads()
 
 
 status_t
+Jh7110SysGpio::SetMux(int pin, uint32 dout, uint32 doen, int din,
+	uint32 padcfg)
+{
+	if (fBase == NULL)
+		return B_NO_INIT;
+	if (pin < 0 || pin >= kJh7110SysGpioCount)
+		return B_BAD_VALUE;
+
+	uint32 word = 4 * (pin / 4);
+	uint32 shift = 8 * (pin % 4);
+	_Update(kJh7110GpioDout + word, kJh7110GpioDoutMask << shift,
+		(dout & kJh7110GpioDoutMask) << shift);
+	_Update(kJh7110GpioDoen + word, kJh7110GpioDoenMask << shift,
+		(doen & kJh7110GpioDoenMask) << shift);
+	if (din >= 0) {
+		uint32 inWord = 4 * (din / 4);
+		uint32 inShift = 8 * (din % 4);
+		_Update(kJh7110GpioGpi + inWord, 0x7fu << inShift,
+			(uint32)(pin + 2) << inShift);
+	}
+	_Update(kJh7110GpioPadcfg + 4 * pin, 0xff, padcfg & 0xff);
+	return B_OK;
+}
+
+
+status_t
 Jh7110SysGpio::SetOutput(int pin, bool high)
 {
 	if (fBase == NULL)
