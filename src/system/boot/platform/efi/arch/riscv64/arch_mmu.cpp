@@ -426,6 +426,14 @@ arch_mmu_generate_post_efi_page_tables(size_t memoryMapSize, efi_memory_descript
 			dprintf("first 2 MiB of RAM in use by the loader, not reserved\n");
 	}
 
+	// Removing ranges can split one and append the tail, but the kernel takes
+	// physical_memory_range[0] as the lowest RAM address (physMemBase,
+	// gVirtFromPhysOffset). Keep both lists sorted.
+	sort_address_ranges(gKernelArgs.physical_memory_range,
+		gKernelArgs.num_physical_memory_ranges);
+	sort_address_ranges(gKernelArgs.physical_allocated_range,
+		gKernelArgs.num_physical_allocated_ranges);
+
 	addr_range physMemRange;
 	GetPhysMemRange(physMemRange);
 	TRACE("physMemRange: %#" B_PRIxADDR ", %#" B_PRIxSIZE "\n",
