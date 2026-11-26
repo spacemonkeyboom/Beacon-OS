@@ -165,6 +165,25 @@ actions BuildEfiSDImage1
 
 	# Add haiku partition to MMC image
 	cat $(2[3-3]) >> $(1)
+
+	# Beacon (VisionFive 2 Lite): the StarFive SDK U-Boot (2021.10 fork)
+	# looks only at partition 3 (bootpart=3): its sdk_boot_env imports
+	# vf2_uEnv.txt from there and then runs ${boot2}. Add a small FAT
+	# partition 3 after the OS partition whose vf2_uEnv.txt starts our EFI
+	# loader from partition 1 with U-Boot's own device tree. Boards that
+	# scan partition 1 (Orange Pi RV, mainline U-Boot EFI fallback) ignore it.
+	echo 'boot2=echo Beacon: starting the EFI loader; load ${bootdev} ${devnum}:1 ${kernel_addr_r} EFI/BOOT/$(EFINAME); bootefi ${kernel_addr_r} ${fdtcontroladdr}' > vf2_uEnv.txt
+	LITE_SIZE=4096
+	LITE_START=`wc -c < $(1)`
+	LITE_START=`expr ${LITE_START} / 1024`
+	dd if=/dev/zero bs=1024 count=${LITE_SIZE} >> $(1)
+	$(2[1]) $(1) 2 0x0c ${LITE_START} ${LITE_SIZE}
+	LITEFS="$(2[2]) --start-offset `expr ${LITE_START} \* 1024`"
+	${LITEFS} --end-offset `expr \( ${LITE_START} + ${LITE_SIZE} \) \* 1024` \
+		--initialize "$(1)" 'BEACON VF2'
+	echo "cp :vf2_uEnv.txt myfs/" | ${LITEFS} $(1)
+	echo "ls myfs" | ${LITEFS} $(1)
+	$(RM) vf2_uEnv.txt
 }
 
 for platform in [ MultiBootSubDirSetup ] {
