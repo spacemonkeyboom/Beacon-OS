@@ -369,6 +369,22 @@ cdns3_supports_device(device_node* parent)
 	if (!get_fdt(parent, module, device))
 		return 0.0f;
 
+	// Already attached (the device manager probes FDT nodes more than once;
+	// a second register_node() would fail with B_NAME_IN_USE).
+	{
+		device_attr ours[] = {
+			{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+				{ .string = "StarFive JH7110 Cadence USB 3 (host)" }},
+			{}
+		};
+		device_node* existing = NULL;
+		if (gDeviceManager->get_next_child_node(parent, ours, &existing)
+				== B_OK) {
+			gDeviceManager->put_node(existing);
+			return 0.0f;
+		}
+	}
+
 	// Vendor U-Boot DT: "starfive,jh7110-cdns3"; Linux: "starfive,jh7110-usb".
 	if (!prop_has_string(module, device, "compatible", "starfive,jh7110-cdns3")
 		&& !prop_has_string(module, device, "compatible",

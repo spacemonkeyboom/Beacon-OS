@@ -507,7 +507,8 @@ map. File: src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp.
 
 ## VisionFive 2 Lite: USB is the on-chip Cadence controller, not a VL805
 
-*Pending (vf2lite-03).* The VisionFive 2 and the Orange Pi RV get their USB-A
+*Confirmed on vf2lite-05 (VF2 Lite: keyboard and mouse work).* The
+VisionFive 2 and the Orange Pi RV get their USB-A
 ports from a VIA VL805 on PCIe 0. The Lite has pcie0 disabled; its ports
 (1x USB 3.0 + 3x USB 2.0 through a hub) sit on the JH7110's own Cadence USB 3
 block (cdns3), whose USB 3 PHY is PCIe PHY 0. vf2lite-02 had no driver for it,
@@ -526,8 +527,14 @@ VisionFive 2 / Orange Pi RV one is "peripheral" and is left alone.
 ## JH7110: frame buffer RAM was never reserved once the uncached alias was on
 
 *Seen on the VF2 Lite (vf2lite-02, green lines over the splash and desktop
-on some boots, clean on others with identical display/clock logs); fix in
-vf2lite-04, pending.* With the uncached DDR alias (RenkuOS #490),
+on some boots, clean on others with identical display/clock logs). The
+reservation fix is confirmed in the vf2lite-04 log ("frame buffer
+0xfe000000-0xfe7e9000 removed from RAM") and that boot was clean, but the
+user later described the lines as 1-px horizontal runs from a coloured
+pixel to the right edge, which looks like display FIFO underflow rather
+than RAM reuse. Since the fix, vf2lite-04 and -05 gave 2 clean Lite boots
+in a row: likely fixed, keep watching (display underflow stays the fallback
+theory, see the vf2lite PLAN).* With the uncached DDR alias (RenkuOS #490),
 frame_buffer.physical_buffer.start is RAM address + 0x4_0000_0000, and the
 loader removed that alias range from RAM instead of the real one: the log
 shows "frame buffer 0x4fe000000-0x4fe7e9000 removed from RAM" while the
@@ -541,7 +548,10 @@ gFrameBufferAliasOffset before removing the range.
 ## cdns3_jh7110: the xHCI never started (child node without a module)
 
 *Seen on the VF2 Lite with vf2lite-04: host mode on, then no xhci line, and
-the glue ran twice; fix in vf2lite-05, pending.* The glue published its
+the glue ran twice. Fix confirmed on vf2lite-05 (xHCI starts, keyboard and
+mouse work). A second probe pass still tried to register the glue again
+(B_NAME_IN_USE, harmless); vf2lite-06 skips nodes that are already
+attached.* The glue published its
 "xhci_platform" child with register_node(..., NULL module, ...), which the
 device manager rejects; the failed child registration also made the glue
 node get initialized again (the second power-up sequence). Fix: the glue
