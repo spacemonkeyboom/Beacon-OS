@@ -13,6 +13,7 @@
 #include <boot/platform.h>
 #include <boot/stage2.h>
 #include <boot/stdio.h>
+#include <boot/platform/generic/video.h>
 #include <string.h>
 
 #include <arch_cpu_defs.h>
@@ -283,6 +284,15 @@ arch_start_kernel(addr_t kernelEntry)
 	if (gKernelArgs.arch_args.ccache.size != 0)
 		beacon_display_restore();
 #endif
+	// Beacon: the one boot splash, now that the display is back on
+	// (video.cpp defers it on riscv64)
+	if (gKernelArgs.frame_buffer.enabled) {
+		video_draw_deferred_splash(
+			gKernelArgs.frame_buffer.physical_buffer.start);
+		beacon_flush_display_range(
+			gKernelArgs.frame_buffer.physical_buffer.start,
+			gKernelArgs.frame_buffer.physical_buffer.size);
+	}
 
 #ifdef BEACON_FB_PROBE
 	// Beacon experiment (JH7110): is the display still scanning out after

@@ -33,6 +33,11 @@ void uncompress_8bit_RLE(const uint8 compressed[], uint8 *uncompressed);
 
 /* default splash display */
 status_t video_display_splash(addr_t frameBuffer);
+/* Beacon: with deferred set, video_display_splash() only prepares the
+ * images (icons into kernel args, logo kept); video_draw_deferred_splash()
+ * draws them later without allocating (usable after ExitBootServices). */
+void video_set_splash_deferred(bool deferred);
+void video_draw_deferred_splash(addr_t frameBuffer);
 
 /* video text console */
 class ConsoleNode* video_text_console_init(addr_t frameBuffer);

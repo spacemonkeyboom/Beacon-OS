@@ -2121,6 +2121,24 @@ bwfm_connect(struct bwfm_softc *sc)
 	bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
 	bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
 
+#ifdef __HAIKU__
+	/* Beacon: after the interface was closed and opened again (Wi-Fi
+	 * toggled) the desired SSID can be empty while net80211 still picked a
+	 * node; the join was then never sent and AUTH timed out silently. Join
+	 * the node net80211 chose. */
+	if (ic->ic_des_esslen == 0 && ic->ic_bss != NULL
+	    && ic->ic_bss->ni_esslen > 0
+	    && ic->ic_bss->ni_esslen <= BWFM_MAX_SSID_LEN) {
+		memcpy(ic->ic_des_essid, ic->ic_bss->ni_essid,
+		    ic->ic_bss->ni_esslen);
+		ic->ic_des_esslen = ic->ic_bss->ni_esslen;
+		printf("%s: connect: no desired SSID, using the chosen node's\n",
+		    DEVNAME(sc));
+	}
+	if (ic->ic_des_esslen == 0 || ic->ic_des_esslen > BWFM_MAX_SSID_LEN)
+		printf("%s: connect: no SSID to join (len %d), join not sent\n",
+		    DEVNAME(sc), ic->ic_des_esslen);
+#endif
 	if (ic->ic_des_esslen && ic->ic_des_esslen <= BWFM_MAX_SSID_LEN) {
 		params = malloc(sizeof(*params), M_TEMP, M_WAITOK | M_ZERO);
 		memcpy(params->ssid.ssid, ic->ic_des_essid, ic->ic_des_esslen);
@@ -2132,7 +2150,13 @@ bwfm_connect(struct bwfm_softc *sc)
 		params->scan.active_time = htole32(-1);
 		params->scan.passive_time = htole32(-1);
 		params->scan.home_time = htole32(-1);
-		if (bwfm_fwvar_var_set_data(sc, "join", params, sizeof(*params))) {
+		int join_error = bwfm_fwvar_var_set_data(sc, "join", params,
+		    sizeof(*params));
+#ifdef __HAIKU__
+		printf("%s: connect: join sent (%d)%s\n", DEVNAME(sc), join_error,
+		    join_error ? ", trying SET_SSID" : "");
+#endif
+		if (join_error) {
 			struct bwfm_join_params join;
 			memset(&join, 0, sizeof(join));
 			memcpy(join.ssid.ssid, ic->ic_des_essid,

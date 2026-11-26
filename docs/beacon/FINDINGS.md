@@ -371,3 +371,23 @@ Only a power cycle helped. Recovery now does what a power cycle does:
   rv67 also restarts after 8 aborted scans (SCAN -> INIT) in a row with the
   interface up. Heavy packet loss without errors is not yet
   detected.
+
+## Boot splash shown twice (JH7110)
+
+*Pending (rv68).* The loader drew the splash, then ExitBootServices let the
+firmware power the display (VOUT) off; arch_start turns it back on, so the
+screen went black for ~2 s and the splash came back: it looked like two
+splashes. On riscv64 the loader now only prepares the splash images, keeps
+the RISC-V screen up while it works, and draws the splash once, right after
+the display is restored (video_set_splash_deferred() /
+video_draw_deferred_splash()).
+
+## Wi-Fi does not rejoin after being switched off and on
+
+*Pending (rv68).* After the interface is closed and reopened, AUTH timed out
+with no firmware events at all. Suspect: bwfm_connect() sends "join" only if
+the desired SSID is set, and it can be empty after the reopen. It now falls
+back to the SSID of the node net80211 chose and logs every join ("connect:
+join sent (N)") so the next log shows which step fails. rv63 shows the same
+bug, so it predates the chip-recovery work. A warm reboot did not clear a
+chip that got no ACKs from the AP; unplugging power did.

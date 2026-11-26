@@ -106,11 +106,87 @@ video_blit_image(addr_t frameBuffer, const uint8 *data,
 }
 
 
+// Beacon: deferred splash (see video.h)
+static bool gBeaconSplashDeferred;
+static uint8* gBeaconDeferredLogo;
+static const uint8* gBeaconDeferredIcons;
+
+
+static status_t
+beacon_prepare_deferred_splash()
+{
+	bool indexed = gKernelArgs.frame_buffer.depth == 8;
+	unsigned int bpp = indexed ? 1 : 3;
+	unsigned int size = kSplashLogoWidth * kSplashLogoHeight * bpp;
+	gBeaconDeferredLogo = (uint8*)malloc(size);
+	if (gBeaconDeferredLogo == NULL)
+		return B_NO_MEMORY;
+	if (indexed) {
+		platform_set_palette(k8BitPalette);
+		uncompress(kSplashLogo8BitCompressedImage,
+			sizeof(kSplashLogo8BitCompressedImage), gBeaconDeferredLogo, size);
+	} else {
+		uncompress(kSplashLogo24BitCompressedImage,
+			sizeof(kSplashLogo24BitCompressedImage), gBeaconDeferredLogo, size);
+	}
+
+	size = kSplashIconsWidth * kSplashIconsHeight * bpp;
+	gKernelArgs.boot_splash = (uint8*)kernel_args_malloc(size);
+	if (gKernelArgs.boot_splash == NULL)
+		return B_NO_MEMORY;
+	if (indexed) {
+		uncompress(kSplashIcons8BitCompressedImage,
+			sizeof(kSplashIcons8BitCompressedImage), gKernelArgs.boot_splash,
+			size);
+	} else {
+		uncompress(kSplashIcons24BitCompressedImage,
+			sizeof(kSplashIcons24BitCompressedImage), gKernelArgs.boot_splash,
+			size);
+	}
+	gBeaconDeferredIcons = gKernelArgs.boot_splash
+		+ kSplashIconsWidth * (kSplashIconsHeight / 2) * bpp;
+	return B_OK;
+}
+
+
+extern "C" void
+video_set_splash_deferred(bool deferred)
+{
+	gBeaconSplashDeferred = deferred;
+}
+
+
+extern "C" void
+video_draw_deferred_splash(addr_t frameBuffer)
+{
+	if (gBeaconDeferredLogo == NULL || gBeaconDeferredIcons == NULL)
+		return;
+	uint32 rowBytes = gKernelArgs.frame_buffer.bytes_per_row;
+	uint32 rows = gKernelArgs.frame_buffer.height;
+	for (uint32 y = 0; y < rows; y++) {
+		uint32* row = (uint32*)(frameBuffer + y * rowBytes);
+		for (uint32 x = 0; x < rowBytes / 4; x++)
+			row[x] = 0;
+	}
+	int width, height, x, y;
+	compute_splash_logo_placement(gKernelArgs.frame_buffer.width,
+		gKernelArgs.frame_buffer.height, width, height, x, y);
+	video_blit_image(frameBuffer, gBeaconDeferredLogo, width, height,
+		kSplashLogoWidth, x, y);
+	compute_splash_icons_placement(gKernelArgs.frame_buffer.width,
+		gKernelArgs.frame_buffer.height, width, height, x, y);
+	video_blit_image(frameBuffer, gBeaconDeferredIcons, width, height,
+		kSplashIconsWidth, x, y);
+}
+
+
 extern "C" status_t
 video_display_splash(addr_t frameBuffer)
 {
 	if (!gKernelArgs.frame_buffer.enabled)
 		return B_NO_INIT;
+	if (gBeaconSplashDeferred)
+		return beacon_prepare_deferred_splash();
 
 	addr_t pos = 0;
 	// Limit area to clear to estimated screen area
