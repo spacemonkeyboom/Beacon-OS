@@ -46,6 +46,14 @@ This is the first step toward **Firefox on RISC-V Beacon**. See
 
 ## Screenshots
 
+Beacon on an Orange Pi RV, November 26, 2026: WebPositive on Wikipedia, Terminal,
+ActivityMonitor with all four cores busy, and About Beacon, over wallpaper 6
+(AI-generated with Grok). Captured on the board itself:
+
+<p align="center">
+  <img src="docs/beacon/screenshots/beacon-orangepi-rv-2026-11-26.jpg" alt="Beacon on an Orange Pi RV: WebPositive showing the RISC-V article on Wikipedia, Terminal, ActivityMonitor and About Beacon over a photographic wallpaper" width="860">
+</p>
+
 Beacon 0.4 running WebPositive on an Orange Pi RV (8 GB), captured on the board itself:
 
 <p align="center">
