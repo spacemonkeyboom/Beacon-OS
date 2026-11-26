@@ -721,3 +721,18 @@ What another port needs to know about the D80's SDIO protocol (details in the dr
 Firmware is never shipped (no AIC licence): it is loaded from
 /boot/system/non-packaged/data/firmware/aic8800/. Local test images add it at build time from
 a git-ignored UserBuildConfig only.
+
+**vf2lite-12 result (2026-11-26):** the AIC8800D80 enumerated at boot (CCCR, CIS, 4-bit, 25 MHz all
+fine), but when aic8800 attached ~10 s later every CMD52 to the card timed out (no response:
+first SDIO set_blocklen, then function_enable). Nothing logged a reset in between. The dw_mmc
+per-command trace had used up its 64-line budget during enumeration, which is why the controller
+showed no lines for those commands (they were sent, they just weren't logged).
+(The "reg 0x200" in the shim's set_blocklen error is the block length, not an address.) The
+"found" line printed twice is normal: the compat layer probes once in init_hardware and again
+before attach.
+Fix in vf2lite-13 (pending): like the Linux BSP, which powers the chip on and rescans the host
+right before it uses it, aic8800 now checks the card with a CMD52 read of CCCR 0. If the card is
+silent, it calls reset_card (WL_REG_ON power cycle plus re-enumeration, CMD5 first, no CMD0) and
+tries again, up to two times. dw_mmc PowerCycle() now logs the reset GPIO, the Lite sdio1 pin mux
+and the controller state before cycling, and refills the command trace budget to 24, so the next
+log shows why the card went quiet and how it came back.

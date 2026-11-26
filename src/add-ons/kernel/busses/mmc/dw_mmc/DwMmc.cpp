@@ -1380,6 +1380,22 @@ DwMmcHost::PowerCycle()
 	if (fGpio == NULL || fConfig.resetGpio < 0)
 		return B_NOT_SUPPORTED;
 
+	// Show what the card's lines look like before we cycle it (did anything
+	// move the reset GPIO or the pin mux?), and log the re-enumeration.
+	SDIO_INFO("%s: power cycle requested; pin state before:\n", fConfig.name);
+	fGpio->LogPin(fConfig.resetGpio, "SDIO reset");
+	if (fConfig.liteSdio1) {
+		static const int kLitePins[] = { 10, 9, 11, 12, 7, 8 };
+		for (size_t i = 0; i < B_COUNT_OF(kLitePins); i++)
+			fGpio->LogPin(kLitePins[i], "VF2 Lite sdio1 (Wi-Fi)");
+	}
+	SDIO_INFO("%s: before power cycle: STATUS %#" B_PRIx32 " RINTSTS %#"
+		B_PRIx32 " CLKENA %#" B_PRIx32 " CLKDIV %#" B_PRIx32 " CTYPE %#"
+		B_PRIx32 "\n", fConfig.name, _Read(kDwStatus), _Read(kDwRintsts),
+		_Read(kDwClkena), _Read(kDwClkdiv), _Read(kDwCtype));
+	if (fTraceCommands < 24)
+		fTraceCommands = 24;
+
 	_SdioPowerSequence("recovery");
 	if (!_ResetController(kDwCtrlAllResetFlags))
 		ERROR("%s: controller reset after power cycle failed\n", fConfig.name);

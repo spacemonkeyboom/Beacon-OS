@@ -204,6 +204,42 @@ aic_crc8_ponl_107(const uint8_t *p, int size)
 /* #pragma mark - SDIO function setup */
 
 
+/*
+ * vf2lite-12 (2026-11-26): the card enumerated fine at boot, but ~10 s
+ * later, when this driver attached, it no longer answered any CMD52
+ * (response timeouts). The Linux BSP powers the chip on and rescans the
+ * host right before it uses it (aicbsp_platform_power_on), so do the same
+ * when the card is silent: power-cycle it through WL_REG_ON and enumerate it
+ * again (the bus manager's reset_card), then retry.
+ */
+static int
+aic_card_check(struct aic_softc *sc)
+{
+	uint8_t cccr = 0;
+	status_t status;
+	int attempt;
+
+	for (attempt = 0; ; attempt++) {
+		status = SDIO_OPS(sc)->read_byte(SDIO_COOKIE(sc), 0, 0x00, &cccr);
+		if (status == B_OK) {
+			printf("%s: card answers (CCCR revision 0x%02x)%s, %lld ms "
+				"after boot\n", AIC_NAME, cccr,
+				attempt > 0 ? " after a power cycle" : "",
+				(long long)(system_time() / 1000));
+			return 0;
+		}
+		printf("%s: card does not answer CMD52 (%s), %lld ms after boot\n",
+			AIC_NAME, strerror(status), (long long)(system_time() / 1000));
+		if (attempt >= 2)
+			return EIO;
+		printf("%s: power-cycling the card and enumerating it again "
+			"(try %d)\n", AIC_NAME, attempt + 1);
+		if (sdmmc_io_reset_card(&sc->sc_sdmmc) != 0)
+			printf("%s: card reset failed\n", AIC_NAME);
+	}
+}
+
+
 /* aicwf_sdiov3_func_init() */
 static int
 aic_sdio_func_init(struct aic_softc *sc)
@@ -936,7 +972,9 @@ aic_sdio_attach(device_t dev)
 	}
 
 	rw_enter_write(&sc->sc_sdmmc.sc_lock);
-	error = aic_sdio_func_init(sc);
+	error = aic_card_check(sc);
+	if (error == 0)
+		error = aic_sdio_func_init(sc);
 	if (error == 0)
 		error = aic_fw_init(sc);
 	rw_exit(&sc->sc_sdmmc.sc_lock);
