@@ -1,0 +1,39 @@
+diff --git a/src/platform/osmesa_bgl.h b/src/platform/osmesa_bgl.h
+index 124e294..8f88743 100644
+--- a/src/platform/osmesa_bgl.h
++++ b/src/platform/osmesa_bgl.h
+@@ -35,7 +35,10 @@
+ #define GL_GLEXT_PROTOTYPES 1
+ 
+ #include <GL/gl.h>
++/* Beacon: GLU is not used here; include it only when installed. */
++#if __has_include(<GL/glu.h>)
+ #include <GL/glu.h>
++#endif
+ #include <GL/glext.h>
+ 
+ #ifdef __cplusplus
+@@ -442,7 +445,9 @@ OSMesaSwapBuffers(OSMesaContext ctx) {
+ 		return;
+ 	}
+ 	
+-	glReadBuffer(GL_FRONT);
++	// Beacon: read the frame just rendered. No buffer swap happens before
++	// this, so GL_FRONT still holds the previous (initially black) frame.
++	glReadBuffer(GL_BACK);
+ 	
+ 	glReadPixels(0, 0, context->width, context->height,
+ 			   GL_BGRA, GL_UNSIGNED_BYTE, context->userBuffer);
+diff --git a/src/platform/platform.pro b/src/platform/platform.pro
+index 6c50dab..725c5f6 100644
+--- a/src/platform/platform.pro
++++ b/src/platform/platform.pro
+@@ -6,7 +6,7 @@ load(qt_plugin)
+ 
+ QT += widgets-private core-private gui-private
+ 
+-LIBS += -lbe -lroot -ltracker -lgame -lGL -lGLU
++LIBS += -lbe -lroot -ltracker -lgame -lGL
+ 
+ CONFIG += plugin
+ 

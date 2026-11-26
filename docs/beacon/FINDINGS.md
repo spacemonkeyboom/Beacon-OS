@@ -394,7 +394,7 @@ chip that got no ACKs from the AP; unplugging power did.
 
 ## Boot time sync never succeeded after one hung attempt
 
-*Fix tested by hand on rv68.* The b46bed6f70 fix ran each NTP attempt in a
+*Confirmed on rv69 (synced on its own at connect, then the time zone tab opened).* The b46bed6f70 fix ran each NTP attempt in a
 thread with a 15 s limit. Once one attempt hung in the resolver, every later
 attempt in the same process hung too (the stuck thread kept the resolver's
 lock), so the clock stayed at 1970 while `Time --update` from a shell synced
@@ -410,3 +410,11 @@ the network list changed while the menu was open, BMenu kept tracking a
 removed item and crashed in BMenu::_SelectItem() -> BView::Invalidate(). The
 rebuild now waits until the menu is closed. On the same rv68 test the Wi-Fi
 rejoined after off/on (the join fallback works).
+
+## Qt 6.10.3 runs on Beacon (riscv64)
+
+*Confirmed on rv69.* The Qt 6 widget test app opened its window on the
+Orange Pi RV: qtbase 6.10.3 cross-built with the HaikuPorts patchset plus
+three fixes (memrchr guard, PIC only on Haiku, libexecinfo lambda), and
+qt6-haikuplugins with the same OSMesa GL_BACK fix as Qt 5. Notes and patches:
+the Beacon qt6 tree (QT6.md), to be copied into docs/beacon/qt6/.

@@ -1,0 +1,99 @@
+diff --git a/cmake/QtBuildHelpers.cmake b/cmake/QtBuildHelpers.cmake
+index 360b7a8b..ec950de5 100644
+--- a/cmake/QtBuildHelpers.cmake
++++ b/cmake/QtBuildHelpers.cmake
+@@ -43,7 +43,13 @@ endmacro()
+ 
+ macro(qt_internal_setup_position_independent_code)
+     ## Position independent code:
+-    set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
++    # Beacon: HaikuPorts turns this off for Haiku (it passes -fPIC in the
++    # flags); keep it on for other systems, e.g. the Linux host tools build.
++    if(CMAKE_SYSTEM_NAME STREQUAL "Haiku")
++        set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
++    else()
++        set(CMAKE_POSITION_INDEPENDENT_CODE ON)
++    endif()
+ 
+     # Does the linker support position independent code?
+     include(CheckPIESupported)
+diff --git a/mkspecs/haiku-riscv64-cross-g++/qmake.conf b/mkspecs/haiku-riscv64-cross-g++/qmake.conf
+new file mode 100644
+index 00000000..2fd48234
+--- /dev/null
++++ b/mkspecs/haiku-riscv64-cross-g++/qmake.conf
+@@ -0,0 +1,38 @@
++#
++# qmake configuration for cross-compiling to Haiku riscv64 (Beacon)
++# with Haiku's riscv64-unknown-haiku- cross tools (gcc 13). Use with
++# -xplatform haiku-riscv64-cross-g++ -sysroot <Haiku sysroot>.
++#
++
++MAKEFILE_GENERATOR      = UNIX
++QMAKE_PLATFORM          = haiku
++
++include(../common/unix.conf)
++
++# Beacon: the cross gcc spec links only static libgcc; C++ exception
++# unwinding (_Unwind_Resume) lives in libgcc_s, as on native Haiku.
++QMAKE_LIBS              = -lgcc_s
++QMAKE_INCDIR            =
++QMAKE_LIBDIR            =
++QMAKE_LIBS_NETWORK      = -lnetwork
++QMAKE_LIBS_OPENGL       = -lGL
++QMAKE_LIBS_OPENGL_QT    = -lGL
++
++include(../common/gcc-base-unix.conf)
++include(../common/g++-unix.conf)
++
++isEmpty(CROSS_COMPILE): CROSS_COMPILE = riscv64-unknown-haiku-
++
++QMAKE_CC                = $${CROSS_COMPILE}gcc
++QMAKE_CXX               = $${CROSS_COMPILE}g++
++QMAKE_LINK              = $${CROSS_COMPILE}g++
++QMAKE_LINK_SHLIB        = $${CROSS_COMPILE}g++
++QMAKE_LINK_C            = $${CROSS_COMPILE}gcc
++QMAKE_LINK_C_SHLIB      = $${CROSS_COMPILE}gcc
++QMAKE_AR                = $${CROSS_COMPILE}ar cqs
++QMAKE_OBJCOPY           = $${CROSS_COMPILE}objcopy
++QMAKE_NM                = $${CROSS_COMPILE}nm -P
++QMAKE_STRIP             = $${CROSS_COMPILE}strip
++QMAKE_RANLIB            =
++
++load(qt_config)
+diff --git a/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h b/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h
+new file mode 100644
+index 00000000..36fd1bfb
+--- /dev/null
++++ b/mkspecs/haiku-riscv64-cross-g++/qplatformdefs.h
+@@ -0,0 +1,2 @@
++// Beacon: same platform definitions as the native Haiku mkspec.
++#include "../haiku-g++/qplatformdefs.h"
+diff --git a/src/corelib/global/qlogging.cpp b/src/corelib/global/qlogging.cpp
+index c6d2e262..16c300e4 100644
+--- a/src/corelib/global/qlogging.cpp
++++ b/src/corelib/global/qlogging.cpp
+@@ -1537,7 +1537,7 @@ backtraceFramesForLogMessage(int frameCount,
+     // This code is protected by QMessagePattern::mutex so it is thread safe on all compilers
+     static const QRegularExpression rx(QStringLiteral("^(?:[^(]*/)?([^(/]+)\\(([^+]*)(?:[\\+[a-f0-9x]*)?\\) \\[[a-f0-9x]*\\]$"));
+ 
+-    auto decodeFrame = [&](void *&addr) -> DecodedFrame {
++    auto decodeFrame = [&](void *const &addr) -> DecodedFrame { // Beacon: const, as the loop below passes it
+         QScopedPointer<char*, QScopedPointerPodDeleter> strings(backtrace_symbols(&addr, 1));
+         QString trace = QString::fromUtf8(strings.data()[0]);
+         QRegularExpressionMatch m = rx.match(trace);
+diff --git a/src/corelib/text/qbytearray.cpp b/src/corelib/text/qbytearray.cpp
+index 72347f56..76b2bcd0 100644
+--- a/src/corelib/text/qbytearray.cpp
++++ b/src/corelib/text/qbytearray.cpp
+@@ -72,7 +72,10 @@ static constexpr inline uchar asciiLower(uchar c)
+ 
+     Used in QByteArrayView::lastIndexOf() overload for a single char.
+ */
++// Beacon: HaikuPorts declares this for Haiku only; glibc (host tools) has a C++ overload.
++#ifdef Q_OS_HAIKU
+ extern void		*memrchr(const void *source, int value, size_t length);
++#endif
+ 
+ const void *qmemrchr(const void *s, int needle, size_t size) noexcept
+ {
