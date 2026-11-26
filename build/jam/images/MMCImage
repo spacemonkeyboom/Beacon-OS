@@ -172,7 +172,10 @@ actions BuildEfiSDImage1
 	# partition 3 after the OS partition whose vf2_uEnv.txt starts our EFI
 	# loader from partition 1 with U-Boot's own device tree. Boards that
 	# scan partition 1 (Orange Pi RV, mainline U-Boot EFI fallback) ignore it.
-	echo 'boot2=echo Beacon: starting the EFI loader; load ${bootdev} ${devnum}:1 ${kernel_addr_r} EFI/BOOT/$(EFINAME); bootefi ${kernel_addr_r} ${fdtcontroladdr}' > vf2_uEnv.txt
+	# "pci enum" first: the VisionFive 2's VL805 USB hub chip only reports
+	# its ports correctly (no false over-current) after U-Boot has brought
+	# up PCIe once, as its own distro boot does. Harmless on the Lite.
+	echo 'boot2=echo Beacon: starting the EFI loader; pci enum; load ${bootdev} ${devnum}:1 ${kernel_addr_r} EFI/BOOT/$(EFINAME); bootefi ${kernel_addr_r} ${fdtcontroladdr}' > vf2_uEnv.txt
 	LITE_SIZE=32768
 	LITE_START=`wc -c < $(1)`
 	LITE_START=`expr ${LITE_START} / 1024`

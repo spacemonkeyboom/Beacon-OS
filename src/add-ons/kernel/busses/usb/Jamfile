@@ -33,3 +33,4 @@ KernelAddon <usb>xhci :
 	: xhci.rdef
 	;
 
+SubInclude HAIKU_TOP src add-ons kernel busses usb cdns3_jh7110 ;

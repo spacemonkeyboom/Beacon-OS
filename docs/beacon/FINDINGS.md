@@ -504,3 +504,87 @@ off, and the first fault died in STrap -> VMAddressSpace::GetKernel()
 (NULL+0x54, no address space yet). Fix: sort the physical memory and
 allocated range lists after all removals, before computing the physical
 map. File: src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp.
+
+## VisionFive 2 Lite: USB is the on-chip Cadence controller, not a VL805
+
+*Confirmed on vf2lite-05 (VF2 Lite: keyboard and mouse work).* The
+VisionFive 2 and the Orange Pi RV get their USB-A
+ports from a VIA VL805 on PCIe 0. The Lite has pcie0 disabled; its ports
+(1x USB 3.0 + 3x USB 2.0 through a hub) sit on the JH7110's own Cadence USB 3
+block (cdns3), whose USB 3 PHY is PCIe PHY 0. vf2lite-02 had no driver for it,
+so usb_hid found no devices. Fix: new GPL add-on
+src/add-ons/kernel/busses/usb/cdns3_jh7110 (powers the block and switches the
+cdns3 dual-role logic to host, following Linux cdns3-starfive.c / drd.c and
+the StarFive PHY drivers), which publishes an "xhci_platform" node; the MIT
+xhci add-on (src/add-ons/kernel/busses/usb/xhci.cpp) gained a platform
+attachment for such nodes, and the device manager now searches busses/usb
+for device tree nodes. Two Lite-specific details: VBUS is GPIO26 (high) and
+the port switch GPIO62 (low); usb_125m is PLL0/div and PLL0 is 1.25 GHz on
+the JH7110S, so the divider is computed from the real PLL0 rate (10 instead
+of 12). The vendor DT marks the Lite's controller dr_mode "unknown"; the
+VisionFive 2 / Orange Pi RV one is "peripheral" and is left alone.
+
+## JH7110: frame buffer RAM was never reserved once the uncached alias was on
+
+*Seen on the VF2 Lite (vf2lite-02, green lines over the splash and desktop
+on some boots, clean on others with identical display/clock logs). The
+reservation fix is confirmed in the vf2lite-04 log ("frame buffer
+0xfe000000-0xfe7e9000 removed from RAM") and that boot was clean, but the
+user later described the lines as 1-px horizontal runs from a coloured
+pixel to the right edge, which looks like display FIFO underflow rather
+than RAM reuse. Since the fix, vf2lite-04 and -05 gave 2 clean Lite boots
+in a row: likely fixed, keep watching (display underflow stays the fallback
+theory, see the vf2lite PLAN).* With the uncached DDR alias (RenkuOS #490),
+frame_buffer.physical_buffer.start is RAM address + 0x4_0000_0000, and the
+loader removed that alias range from RAM instead of the real one: the log
+shows "frame buffer 0x4fe000000-0x4fe7e9000 removed from RAM" while the
+physical ranges still contain 0xfe000000-0xfe7e9000. The kernel could then
+hand frame buffer pages to anything, so whatever landed there showed on
+screen (intermittent, depends on allocation). Affects every JH7110 board
+since the alias change, the Orange Pi RV and VisionFive 2 included. Fix:
+src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp subtracts
+gFrameBufferAliasOffset before removing the range.
+
+## cdns3_jh7110: the xHCI never started (child node without a module)
+
+*Seen on the VF2 Lite with vf2lite-04: host mode on, then no xhci line, and
+the glue ran twice. Fix confirmed on vf2lite-05 (xHCI starts, keyboard and
+mouse work). A second probe pass still tried to register the glue again
+(B_NAME_IN_USE, harmless); vf2lite-06 skips nodes that are already
+attached.* The glue published its
+"xhci_platform" child with register_node(..., NULL module, ...), which the
+device manager rejects; the failed child registration also made the glue
+node get initialized again (the second power-up sequence). Fix: the glue
+node now carries xhci/phys, xhci/size, xhci/irq and names
+"busses/usb/xhci/platform/driver_v1" as its B_DEVICE_FIXED_CHILD; the xhci
+platform module is attached only that way (its supports_device returns 0).
+Also measured: PLL0 on the Lite is 1.0 GHz (not the 1.25 GHz in Linux's
+DT), so usb_125m needs div 8; the driver computes it from the PLL registers.
+
+## VisionFive 2: USB "over current" on every port after the partition-3 autoboot
+
+**Status:** CONFIRMED on the VisionFive 2 with vf2lite-07 (2026-11-26). Autoboot log shows "Port link up" from pci enum, 3 devices connected, 0 over-current, and keyboard and mouse work. Lite check pending.
+
+**Symptom:** on the full VisionFive 2, vf2lite-02/05/06 reported root port 2 and hub 7
+ports 0-3 "in an over current state". Only hub 2 port 0 connected, and there was no
+keyboard or mouse. rv69 worked on the same hardware.
+
+**What was ruled out:**
+- The loader: vf2lite-06 with the rv69 loader failed the same way.
+- The source: the kernel and add-on diff to rv69 is only wallpapers and Tracker.
+- dw_mmc GPIO62: logged behaviour is identical on both.
+
+**Cause (from the serial logs):** every working VF2 boot was a hand boot. The user
+waited for U-Boot's distro boot to fail and typed load/bootefi at the prompt. Distro
+boot runs PCIe enumeration first ("starfive_pcie pcie@2B000000: Port link up").
+Every failing boot was the partition-3 autoboot, whose boot2 jumps straight to
+bootefi, so U-Boot never brings up PCIe and the VL805 behind it. Haiku's own PCIe
+bring-up alone leaves the VL805 reporting false over-current on its ports.
+
+**Fix:** boot2 in vf2_uEnv.txt (build/jam/images/MMCImage) now runs `pci enum`
+before loading the EFI loader. This is our own image's script, not a firmware or
+env change. On the Lite, PCIe0 has no link and the command just returns.
+
+**Later:** find what U-Boot's enumeration does that our starfive_pcie driver doesn't
+(PERST timing, a VL805 settle delay, or bridge setup), so Beacon doesn't depend on
+it. Then the image also works with boot paths that skip `pci enum`.

@@ -1791,6 +1791,10 @@ device_node::_GetNextDriverPath(void*& cookie, KPath& _path)
 					_AddPath(*stack, "bus_managers/pci");
 					_AddPath(*stack, "busses/pci");
 					_AddPath(*stack, "busses/mmc");
+					// Beacon: on-chip USB host glue found through the device
+					// tree (cdns3_jh7110), and the xhci_platform nodes it
+					// publishes.
+					_AddPath(*stack, "busses/usb");
 				}
 				break;
 		}

@@ -39,6 +39,7 @@ static usb_for_controller_interface* gUSB;
 
 #define XHCI_PCI_DEVICE_MODULE_NAME "busses/usb/xhci/pci/driver_v1"
 #define XHCI_PCI_USB_BUS_MODULE_NAME "busses/usb/xhci/device_v1"
+#define XHCI_PLATFORM_DEVICE_MODULE_NAME "busses/usb/xhci/platform/driver_v1"
 
 
 typedef struct {
@@ -47,6 +48,10 @@ typedef struct {
 	pci_device* device;
 
 	pci_info pciinfo;
+
+	// Beacon: set (and pci == NULL) for an "xhci_platform" controller
+	bool isPlatform;
+	xhci_platform_info platform;
 
 	device_node* node;
 	device_node* driver_node;
@@ -71,7 +76,10 @@ init_bus(device_node* node, void** bus_cookie)
 	if (gUSB->get_stack((void**)&stack) != B_OK)
 		return B_ERROR;
 
-	XHCI* xhci = new(std::nothrow) XHCI(&bus->pciinfo, bus->pci, bus->device, stack, node);
+	XHCI* xhci = bus->isPlatform
+		? new(std::nothrow) XHCI(NULL, NULL, NULL, stack, node, &bus->platform)
+		: new(std::nothrow) XHCI(&bus->pciinfo, bus->pci, bus->device, stack,
+			node);
 	if (xhci == NULL)
 		return B_NO_MEMORY;
 
@@ -220,6 +228,68 @@ supports_device(device_node* parent)
 }
 
 
+// #pragma mark - Beacon: platform (device tree) controllers
+
+
+/*!	Platform controllers are attached only as the B_DEVICE_FIXED_CHILD of
+	their glue driver's node (which carries xhci/phys, xhci/size, xhci/irq),
+	never by probing, so the same registers can't get a second driver.
+*/
+static float
+platform_supports_device(device_node* parent)
+{
+	return 0.0f;
+}
+
+
+static status_t
+platform_register_device(device_node* parent)
+{
+	device_attr attrs[] = {
+		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "XHCI platform"}},
+		{}
+	};
+	return gDeviceManager->register_node(parent,
+		XHCI_PLATFORM_DEVICE_MODULE_NAME, attrs, NULL, NULL);
+}
+
+
+static status_t
+platform_init_device(device_node* node, void** device_cookie)
+{
+	xhci_pci_sim_info* bus = (xhci_pci_sim_info*)calloc(1,
+		sizeof(xhci_pci_sim_info));
+	if (bus == NULL)
+		return B_NO_MEMORY;
+
+	device_node* parent = gDeviceManager->get_parent_node(node);
+	uint64 phys = 0, size = 0;
+	uint32 irq = 0;
+	status_t status = gDeviceManager->get_attr_uint64(parent, "xhci/phys",
+		&phys, false);
+	if (status == B_OK) {
+		status = gDeviceManager->get_attr_uint64(parent, "xhci/size", &size,
+			false);
+	}
+	if (status == B_OK)
+		status = gDeviceManager->get_attr_uint32(parent, "xhci/irq", &irq, false);
+	gDeviceManager->put_node(parent);
+	if (status != B_OK || phys == 0 || size == 0 || irq == 0) {
+		TRACE_MODULE_ERROR("platform node without xhci/phys, size or irq\n");
+		free(bus);
+		return B_BAD_VALUE;
+	}
+
+	bus->isPlatform = true;
+	bus->platform.phys = phys;
+	bus->platform.size = size;
+	bus->platform.irq = irq;
+	bus->driver_node = node;
+	*device_cookie = bus;
+	return B_OK;
+}
+
+
 static const char*
 xhci_error_string(uint32 error)
 {
@@ -333,15 +403,32 @@ static driver_module_info sXHCIDevice = {
 	NULL, // device removed
 };
 
+// Beacon: root device for an "xhci_platform" node (device tree glue).
+static driver_module_info sXHCIPlatformDevice = {
+	{
+		XHCI_PLATFORM_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+	platform_supports_device,
+	platform_register_device,
+	platform_init_device,
+	uninit_device,
+	register_child_devices,
+	NULL, // rescan
+	NULL, // device removed
+};
+
 module_info* modules[] = {
 	(module_info* )&sXHCIDevice,
+	(module_info* )&sXHCIPlatformDevice,
 	(module_info* )&gXHCIPCIDeviceModule,
 	NULL
 };
 
 
 XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
-	Stack* stack, device_node* node)
+	Stack* stack, device_node* node, const xhci_platform_info* platform)
 	:
 	BusManager(stack, node),
 	fRegisterArea(-1),
@@ -382,6 +469,15 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 	TRACE("constructing new XHCI host controller driver\n");
 	fInitOK = false;
 
+	phys_addr_t physicalAddress;
+	size_t mapSize;
+	if (platform != NULL) {
+		// Beacon: on-chip controller, already powered by its glue driver
+		physicalAddress = platform->phys;
+		mapSize = platform->size;
+		TRACE_ALWAYS("platform controller at %#" B_PRIxPHYSADDR ", irq %"
+			B_PRIu32 "\n", physicalAddress, platform->irq);
+	} else {
 	// enable busmaster and memory mapped access
 	uint16 command = fPci->read_pci_config(fDevice, PCI_command, 2);
 	command &= ~(PCI_command_io | PCI_command_int_disable);
@@ -390,13 +486,14 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 	fPci->write_pci_config(fDevice, PCI_command, 2, command);
 
 	// map the registers (low + high for 64-bit when requested)
-	phys_addr_t physicalAddress = fPCIInfo->u.h0.base_registers[0];
+	physicalAddress = fPCIInfo->u.h0.base_registers[0];
 	if ((fPCIInfo->u.h0.base_register_flags[0] & PCI_address_type)
 			== PCI_address_type_64) {
 		physicalAddress |= (uint64)fPCIInfo->u.h0.base_registers[1] << 32;
 	}
 
-	size_t mapSize = fPCIInfo->u.h0.base_register_sizes[0];
+	mapSize = fPCIInfo->u.h0.base_register_sizes[0];
+	}
 
 	TRACE("map registers %08" B_PRIxPHYSADDR ", size: %" B_PRIuSIZE "\n",
 		physicalAddress, mapSize);
@@ -495,7 +592,8 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 	// kernel works around). Our own implementation; see _VL805TTWait().
 	fVL805 = false;
 	fVL805HubTT = false;
-	if (fPCIInfo->vendor_id == 0x1106 && fPCIInfo->device_id == 0x3483) {
+	if (fPCIInfo != NULL
+		&& fPCIInfo->vendor_id == 0x1106 && fPCIInfo->device_id == 0x3483) {
 		fVL805 = true;
 		uint32 firmware = fPci->read_pci_config(fDevice, 0x50, 4);
 		fVL805HubTT = firmware < 0x0138c0;
@@ -504,7 +602,7 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 	}
 
 	// We need to explicitly take ownership of EHCI ports on earlier Intel chipsets.
-	if (fPCIInfo->vendor_id == PCI_VENDOR_INTEL) {
+	if (fPCIInfo != NULL && fPCIInfo->vendor_id == PCI_VENDOR_INTEL) {
 		switch (fPCIInfo->device_id) {
 			case PCI_DEVICE_INTEL_PANTHER_POINT_XHCI:
 			case PCI_DEVICE_INTEL_LYNX_POINT_XHCI:
@@ -547,6 +645,9 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 	resume_thread(fFinishThread);
 
 	// Find the right interrupt vector, using MSIs if available.
+	if (platform != NULL)
+		fIRQ = platform->irq;
+	else {
 	fIRQ = fPCIInfo->u.h0.interrupt_line;
 	if (fIRQ == 0xFF)
 		fIRQ = 0;
@@ -572,9 +673,14 @@ XHCI::XHCI(pci_info* info, pci_device_module_info* pci, pci_device* device,
 		}
 	}
 
+	}
+
 	if (fIRQ == 0) {
-		TRACE_MODULE_ERROR("device PCI:%d:%d:%d was assigned an invalid IRQ\n",
-			fPCIInfo->bus, fPCIInfo->device, fPCIInfo->function);
+		if (fPCIInfo != NULL) {
+			TRACE_MODULE_ERROR("device PCI:%d:%d:%d was assigned an invalid "
+				"IRQ\n", fPCIInfo->bus, fPCIInfo->device, fPCIInfo->function);
+		} else
+			TRACE_MODULE_ERROR("platform controller without an IRQ\n");
 		return;
 	}
 
@@ -812,7 +918,7 @@ XHCI::Start()
 	TRACE("setting interrupt rate\n");
 
 	// Setting IMOD below 0x3F8 on Intel Lynx Point can cause IRQ lockups
-	if (fPCIInfo->vendor_id == PCI_VENDOR_INTEL
+	if (fPCIInfo != NULL && fPCIInfo->vendor_id == PCI_VENDOR_INTEL
 		&& (fPCIInfo->device_id == PCI_DEVICE_INTEL_PANTHER_POINT_XHCI
 			|| fPCIInfo->device_id == PCI_DEVICE_INTEL_LYNX_POINT_XHCI
 			|| fPCIInfo->device_id == PCI_DEVICE_INTEL_LYNX_POINT_LP_XHCI
