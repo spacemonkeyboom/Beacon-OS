@@ -144,7 +144,15 @@ MMCBus::_TrySdio()
 	}
 
 	uint32_t ocr = 0;
-	status_t status = ExecuteCommand(0, SD_IO_SEND_OP_COND, 0, &ocr);
+	status_t status = B_ERROR;
+	// Beacon: a chip that was just powered up may need a moment; Linux
+	// sends CMD5 once, but a couple of retries 10 ms apart cost little.
+	for (int tries = 0; tries < 3; tries++) {
+		status = ExecuteCommand(0, SD_IO_SEND_OP_COND, 0, &ocr);
+		if (status == B_OK)
+			break;
+		snooze(10000);
+	}
 	if (status != B_OK) {
 		TRACE("sdio: no answer to CMD5 (%s), not an SDIO card\n",
 			strerror(status));

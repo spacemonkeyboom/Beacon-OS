@@ -1469,6 +1469,17 @@ DwMmcHost::_ProbeForCard()
 	// cards answer CMD5, SD cards answer CMD55, eMMC answers CMD1.
 	uint32_t response[4] = {};
 
+	// Beacon (VisionFive 2 Lite): the on-board AIC8800D80 is soldered on
+	// (non-removable). It answers one CMD5 inquiry, but after a CMD0 that
+	// follows it, it stays silent (vf2lite-08/10: our probe's CMD5 worked, the
+	// bus manager's CMD0 + CMD5 then timed out). So leave the very first
+	// CMD5 to the bus manager, like Linux mmc_attach_sdio().
+	if (fConfig.liteSdio1) {
+		SDIO_INFO("%s: VF2 Lite on-board Wi-Fi: not probing, the bus manager "
+			"sends the first CMD5\n", fConfig.name);
+		return true;
+	}
+
 	// Beacon: SDIO first, like Linux. With a DT pwrseq the reset was just
 	// released, so give the chip time to come up.
 	if (_ProbeSdio(fConfig.resetFromDt ? kSdioProbeTries : 1))
