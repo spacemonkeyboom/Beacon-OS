@@ -418,3 +418,14 @@ Orange Pi RV: qtbase 6.10.3 cross-built with the HaikuPorts patchset plus
 three fixes (memrchr guard, PIC only on Haiku, libexecinfo lambda), and
 qt6-haikuplugins with the same OSMesa GL_BACK fix as Qt 5. Notes and patches:
 the Beacon qt6 tree (QT6.md), to be copied into docs/beacon/qt6/.
+
+## Qt Quick 6: software renderer works, OpenGL context creation crashes
+
+*Seen on rv69.* qt6quick ("Hello from Qt Quick 6") runs with
+`QT_QUICK_BACKEND=software`. With the default RHI/OpenGL path it crashes in
+libEGL_mesa under BGLView::Renderer::Init(), called from qt6-haikuplugins'
+OSMesaCreateContextExt() <- QHaikuGLContext <- QRhiGles2::create(). This
+happens with both the threaded and the basic render loop. Qt 5 Quick worked
+with the same libGL/Mesa, so the suspect is the context format Qt 6
+requests (version/profile, depth/stencil) or the Qt 6 plugin's context setup.
+Open.
