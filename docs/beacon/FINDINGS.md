@@ -374,7 +374,7 @@ Only a power cycle helped. Recovery now does what a power cycle does:
 
 ## Boot splash shown twice (JH7110)
 
-*Pending (rv68).* The loader drew the splash, then ExitBootServices let the
+*Confirmed on rv68 (one splash).* The loader drew the splash, then ExitBootServices let the
 firmware power the display (VOUT) off; arch_start turns it back on, so the
 screen went black for ~2 s and the splash came back: it looked like two
 splashes. On riscv64 the loader now only prepares the splash images, keeps
@@ -384,7 +384,7 @@ video_draw_deferred_splash()).
 
 ## Wi-Fi does not rejoin after being switched off and on
 
-*Pending (rv68).* After the interface is closed and reopened, AUTH timed out
+*Confirmed on rv68 (rejoined after off/on).* After the interface is closed and reopened, AUTH timed out
 with no firmware events at all. Suspect: bwfm_connect() sends "join" only if
 the desired SSID is set, and it can be empty after the reopen. It now falls
 back to the SSID of the node net80211 chose and logs every join ("connect:
@@ -401,3 +401,12 @@ lock), so the clock stayed at 1970 while `Time --update` from a shell synced
 at once. Each boot attempt now runs as a child process (`Time --update`,
 killed after 15 s), and `--update` exits 1 on failure. Run from ~ on the
 board: boot-style sync done in 1.4 s.
+
+## Network preferences crashed when Wi-Fi was switched off
+
+*Pending (rv69).* The crash came with the network menu open. Pulse() rebuilds
+the wireless network menu every few pulses, removing and re-adding items. When
+the network list changed while the menu was open, BMenu kept tracking a
+removed item and crashed in BMenu::_SelectItem() -> BView::Invalidate(). The
+rebuild now waits until the menu is closed. On the same rv68 test the Wi-Fi
+rejoined after off/on (the join fallback works).
