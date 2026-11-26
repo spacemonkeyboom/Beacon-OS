@@ -81,7 +81,7 @@ BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 		BPath wallpaper;
 		if (!isDesktop
 			|| find_directory(B_SYSTEM_DATA_DIRECTORY, &wallpaper) != B_OK
-			|| wallpaper.Append("artwork/beacon-wallpaper-3.bmp") != B_OK
+			|| wallpaper.Append("artwork/beacon-wallpaper-6.bmp") != B_OK
 			|| access(wallpaper.Path(), R_OK) != 0)
 			return NULL;
 
