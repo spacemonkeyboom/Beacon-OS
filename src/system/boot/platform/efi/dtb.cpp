@@ -344,6 +344,38 @@ dtb_has_fdt_string(const char* prop, int size, const char* pattern)
 }
 
 
+bool dtb_get_reg(const void* fdt, int node, size_t idx, addr_range& range);
+
+// Beacon: firmware regions the kernel must never touch. U-Boot normally
+// carves these out of the EFI memory map itself, but the VisionFive 2 Lite
+// SDK U-Boot reports the OpenSBI region as EfiBootServicesData.
+void
+dtb_get_reserved_memory(void (*callback)(uint64 start, uint64 size))
+{
+	if (sDtbTable == NULL)
+		return;
+
+	int count = fdt_num_mem_rsv(sDtbTable);
+	for (int i = 0; i < count; i++) {
+		uint64_t address, size;
+		if (fdt_get_mem_rsv(sDtbTable, i, &address, &size) == 0 && size != 0)
+			callback(address, size);
+	}
+
+	int parent = fdt_path_offset(sDtbTable, "/reserved-memory");
+	if (parent < 0)
+		return;
+	int node;
+	fdt_for_each_subnode(node, sDtbTable, parent) {
+		addr_range range;
+		for (size_t i = 0; dtb_get_reg(sDtbTable, node, i, range); i++) {
+			if (range.size != 0)
+				callback(range.start, range.size);
+		}
+	}
+}
+
+
 uint32
 dtb_get_address_cells(const void* fdt, int node)
 {

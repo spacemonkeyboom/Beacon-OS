@@ -387,9 +387,14 @@ read_config(device_node* fdtNode, DwMmcConfig& config)
 	// sdio0 fall back to the Orange Pi RV WL_REG_ON (GPIO62, active low), but
 	// only if nothing answers on the bus first (a VisionFive 2 eMMC answers
 	// CMD1, so its GPIO62 is never touched).
+	// Beacon (VisionFive 2 Lite): only the VisionFive 2 vendor DT describes
+	// sdio0 as an 8-bit eMMC slot, and that is the DT the Orange Pi RV gets.
+	// On the VF2 Lite sdio0 is the 4-bit microSD slot (vendor and mainline
+	// DTs) and GPIO62 drives its USB0 switch, so never touch GPIO62 there.
 	config.isJh7110Sdio0 = config.isJh7110 && base == kJh7110Sdio0Base;
 	read_pwrseq(module, device, config);
-	if (config.isJh7110Sdio0 && !config.resetFromDt) {
+	if (config.isJh7110Sdio0 && !config.resetFromDt
+		&& config.busWidth == 8) {
 		config.resetGpio = 62;
 		config.resetActiveLow = true;
 		config.resetHeuristic = true;

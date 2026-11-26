@@ -18,6 +18,8 @@ extern void dtb_set_kernel_args();
 bool dtb_get_reg(const void* fdt, int node, size_t idx, addr_range& range);
 uint32 dtb_get_interrupt(const void* fdt, int node);
 bool dtb_has_fdt_string(const char* prop, int size, const char* pattern);
+// Beacon: call back for each /memreserve/ entry and /reserved-memory region.
+void dtb_get_reserved_memory(void (*callback)(uint64 start, uint64 size));
 
 
 #endif /* !_ASSEMBLER */

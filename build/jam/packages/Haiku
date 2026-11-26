@@ -69,6 +69,7 @@ AddFilesToPackage add-ons kernel busses usb :
 	<usb>ohci
 	<usb>ehci
 	<usb>xhci
+	cdns3_jh7110@riscv64	# Beacon: VisionFive 2 Lite on-chip USB 3 (host glue)
 	;
 AddFilesToPackage add-ons kernel busses virtio :
 	virtio_mmio@riscv64,arm,arm64
@@ -395,6 +396,7 @@ AddBootModuleSymlinksToPackage
 	<usb>ohci
 	<usb>uhci
 	<usb>xhci
+	cdns3_jh7110@riscv64
 	virtio
 	virtio_block@arm,arm64,riscv64
 	virtio_mmio@arm,arm64,riscv64

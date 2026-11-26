@@ -436,3 +436,127 @@ Open.
 Rust's std builds for riscv64 Haiku unchanged and passes a std test on the
 board (threads, TLS, files, time, networking, unwinding). Details and the
 target spec: docs/beacon/rust/.
+
+## VisionFive 2 Lite: vendor U-Boot boots only from partition 3
+
+*Confirmed on vf2lite-01/02: autoboot from mmc 0:3 on the VF2 Lite and from
+mmc 1:3 on the VisionFive 2 (8 GB).* The StarFive SDK U-Boot for the
+VisionFive 2 Lite (starfive-tech/u-boot JH7110_VisionFive2_devel,
+include/configs/starfive-visionfive2.h) has `bootpart=3`: `sdk_boot_env`
+imports `vf2_uEnv.txt` from partition 3 and runs `${boot2}`;
+`distro_boot_env` imports `uEnv_Lite.txt` from partition 3 and runs
+`sysboot`. Our MMC image only had partitions 1 (FAT) and 2 (BFS), so the
+board would stop at the U-Boot prompt. Fix: build/jam/images/MMCImage adds a
+32 MiB FAT partition 3 (fat_shell cannot format FAT12) after the OS partition holding `vf2_uEnv.txt`, whose
+`boot2` loads EFI/BOOT/BOOTRISCV64.EFI from partition 1 and runs `bootefi`
+with U-Boot's device tree. Boards that read partition 1 ignore it.
+
+## VisionFive 2 Lite: vendor DT says only "starfive,jh7110s"
+
+*Confirmed on vf2lite-01 (VF2 Lite: Beacon splash and display replay
+show).* The Lite's vendor U-Boot DT (starfive_visionfive2_lite.dts) has
+root `compatible = "starfive,jh7110s"` only (mainline Linux lists
+`"starfive,jh7110s", "starfive,jh7110"`). The EFI loader keyed the uncached
+frame buffer alias (display engine does not snoop the L2) on
+`"starfive,jh7110"`, so on the Lite nothing drawn after hand-off would show.
+Fix: src/system/boot/platform/efi/arch/riscv64/arch_dtb.cpp also matches
+`"starfive,jh7110s"`.
+
+## VisionFive 2 Lite: sdio0 is the microSD slot, GPIO62 is a USB switch
+
+*Confirmed on vf2lite-02 (VF2 Lite boots from the microSD on sdio0).*
+dw_mmc fell back to pulsing GPIO62 (the Orange Pi RV Wi-Fi
+WL_REG_ON) on JH7110 sdio0 when the DT had no mmc-pwrseq. On the Lite sdio0
+is the 4-bit microSD slot and GPIO62 drives the USB0 switch
+(jh7110-starfive-visionfive-2-lite.dtsi). Fix: the fallback now applies only
+when sdio0 is described as 8-bit, which is the VisionFive 2 vendor DT the
+Orange Pi RV gets. File: src/add-ons/kernel/busses/mmc/dw_mmc/kernel_interface.cpp.
+
+## VisionFive 2 Lite: kernel store fault at the RAM base (OpenSBI region)
+
+*Seen on the VF2 Lite with the Orange Pi RV image rv69 (serial log
+vf2lite-20261126-105630). Fix confirmed on vf2lite-02: no panic on the Lite
+(4 GB) and the VisionFive 2 (8 GB) still reaches the desktop.* The kernel panicked right
+after the SBI version lines: storeAccessFault, tval 0xffffffff00000000
+(physMapBase = physical 0x40000000), in memset() clearing a fresh page.
+OpenSBI v1.2 sits at 0x40000000-0x4003ffff and is PMP-protected from
+S-mode, but the Lite's SDK U-Boot reports that range as
+EfiBootServicesData, so the loader gave it to the kernel as free RAM. (The
+Orange Pi RV U-Boot reports 0x40000000-0x40080000 as EfiReservedMemoryType.)
+Fix: the riscv64 EFI loader now removes every /memreserve/ entry and
+/reserved-memory region of the device tree from RAM, and always keeps the
+first 2 MiB of RAM (the SBI firmware's place below the usual kernel load
+address) unless the loader itself already allocated pages there. Files:
+src/system/boot/platform/efi/dtb.cpp, dtb.h, arch/riscv64/arch_mmu.cpp.
+The same log showed the Lite's U-Boot looking only at mmc 0:3 (see the
+partition 3 entry above) and a black screen (no "starfive,jh7110" in the
+vendor DT, see the jh7110s entry above).
+
+## riscv64 loader: physical memory ranges must stay sorted
+
+*Seen on the VF2 Lite with vf2lite-01 (serial vf2lite-20261126-113640).
+Fix confirmed on vf2lite-02 on the VF2 Lite and the VisionFive 2.* After the firmware carve-out the first RAM range
+was split and its tail (0x40200000-0x47f00000) appended last. The kernel
+takes physical_memory_range[0] as the RAM base (physMemBase,
+gVirtFromPhysOffset in arch_vm_translation_map.cpp), so it used 0x47f11000
+while the physical map started at 0x40200000: every physical-map access was
+off, and the first fault died in STrap -> VMAddressSpace::GetKernel()
+(NULL+0x54, no address space yet). Fix: sort the physical memory and
+allocated range lists after all removals, before computing the physical
+map. File: src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp.
+
+## VisionFive 2 Lite: USB is the on-chip Cadence controller, not a VL805
+
+*Confirmed on vf2lite-05 (VF2 Lite: keyboard and mouse work).* The
+VisionFive 2 and the Orange Pi RV get their USB-A
+ports from a VIA VL805 on PCIe 0. The Lite has pcie0 disabled; its ports
+(1x USB 3.0 + 3x USB 2.0 through a hub) sit on the JH7110's own Cadence USB 3
+block (cdns3), whose USB 3 PHY is PCIe PHY 0. vf2lite-02 had no driver for it,
+so usb_hid found no devices. Fix: new GPL add-on
+src/add-ons/kernel/busses/usb/cdns3_jh7110 (powers the block and switches the
+cdns3 dual-role logic to host, following Linux cdns3-starfive.c / drd.c and
+the StarFive PHY drivers), which publishes an "xhci_platform" node; the MIT
+xhci add-on (src/add-ons/kernel/busses/usb/xhci.cpp) gained a platform
+attachment for such nodes, and the device manager now searches busses/usb
+for device tree nodes. Two Lite-specific details: VBUS is GPIO26 (high) and
+the port switch GPIO62 (low); usb_125m is PLL0/div and PLL0 is 1.25 GHz on
+the JH7110S, so the divider is computed from the real PLL0 rate (10 instead
+of 12). The vendor DT marks the Lite's controller dr_mode "unknown"; the
+VisionFive 2 / Orange Pi RV one is "peripheral" and is left alone.
+
+## JH7110: frame buffer RAM was never reserved once the uncached alias was on
+
+*Seen on the VF2 Lite (vf2lite-02, green lines over the splash and desktop
+on some boots, clean on others with identical display/clock logs). The
+reservation fix is confirmed in the vf2lite-04 log ("frame buffer
+0xfe000000-0xfe7e9000 removed from RAM") and that boot was clean, but the
+user later described the lines as 1-px horizontal runs from a coloured
+pixel to the right edge, which looks like display FIFO underflow rather
+than RAM reuse. Since the fix, vf2lite-04 and -05 gave 2 clean Lite boots
+in a row: likely fixed, keep watching (display underflow stays the fallback
+theory, see the vf2lite PLAN).* With the uncached DDR alias (RenkuOS #490),
+frame_buffer.physical_buffer.start is RAM address + 0x4_0000_0000, and the
+loader removed that alias range from RAM instead of the real one: the log
+shows "frame buffer 0x4fe000000-0x4fe7e9000 removed from RAM" while the
+physical ranges still contain 0xfe000000-0xfe7e9000. The kernel could then
+hand frame buffer pages to anything, so whatever landed there showed on
+screen (intermittent, depends on allocation). Affects every JH7110 board
+since the alias change, the Orange Pi RV and VisionFive 2 included. Fix:
+src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp subtracts
+gFrameBufferAliasOffset before removing the range.
+
+## cdns3_jh7110: the xHCI never started (child node without a module)
+
+*Seen on the VF2 Lite with vf2lite-04: host mode on, then no xhci line, and
+the glue ran twice. Fix confirmed on vf2lite-05 (xHCI starts, keyboard and
+mouse work). A second probe pass still tried to register the glue again
+(B_NAME_IN_USE, harmless); vf2lite-06 skips nodes that are already
+attached.* The glue published its
+"xhci_platform" child with register_node(..., NULL module, ...), which the
+device manager rejects; the failed child registration also made the glue
+node get initialized again (the second power-up sequence). Fix: the glue
+node now carries xhci/phys, xhci/size, xhci/irq and names
+"busses/usb/xhci/platform/driver_v1" as its B_DEVICE_FIXED_CHILD; the xhci
+platform module is attached only that way (its supports_device returns 0).
+Also measured: PLL0 on the Lite is 1.0 GHz (not the 1.25 GHz in Linux's
+DT), so usb_125m needs div 8; the driver computes it from the PLL registers.

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT
+# Copyright 2026, The Beacon Project.
+
+SubDir HAIKU_TOP src add-ons kernel busses usb cdns3_jh7110 ;
+
+# StarFive JH7110/JH7110S Cadence USB 3 glue (host mode). Contains
+# Linux-derived code: GPL-2.0-only, see THIRD_PARTY.md. The xHCI itself is
+# driven by Haiku's MIT <usb>xhci add-on through a "xhci_platform" node.
+
+SubDirC++Flags -fno-rtti ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders drivers ;
+
+SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src add-ons kernel busses mmc dw_mmc ] ;
+SubDirHdrs $(HAIKU_TOP) src add-ons kernel busses mmc dw_mmc ;
+
+KernelAddon cdns3_jh7110 :
+	cdns3_jh7110.cpp
+	Jh7110Gpio.cpp
+;
