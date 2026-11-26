@@ -446,7 +446,7 @@ imports `vf2_uEnv.txt` from partition 3 and runs `${boot2}`;
 `distro_boot_env` imports `uEnv_Lite.txt` from partition 3 and runs
 `sysboot`. Our MMC image only had partitions 1 (FAT) and 2 (BFS), so the
 board would stop at the U-Boot prompt. Fix: build/jam/images/MMCImage adds a
-4 MiB FAT partition 3 after the OS partition holding `vf2_uEnv.txt`, whose
+32 MiB FAT partition 3 (fat_shell cannot format FAT12) after the OS partition holding `vf2_uEnv.txt`, whose
 `boot2` loads EFI/BOOT/BOOTRISCV64.EFI from partition 1 and runs `bootefi`
 with U-Boot's device tree. Boards that read partition 1 ignore it.
 
