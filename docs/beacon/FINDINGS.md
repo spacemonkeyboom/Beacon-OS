@@ -560,3 +560,31 @@ node now carries xhci/phys, xhci/size, xhci/irq and names
 platform module is attached only that way (its supports_device returns 0).
 Also measured: PLL0 on the Lite is 1.0 GHz (not the 1.25 GHz in Linux's
 DT), so usb_125m needs div 8; the driver computes it from the PLL registers.
+
+## VisionFive 2: USB "over current" on every port after the partition-3 autoboot
+
+**Status:** suspected cause found, fix in vf2lite-07, waiting for a hardware test.
+
+**Symptom:** on the full VisionFive 2, vf2lite-02/05/06 reported root port 2 and hub 7
+ports 0-3 "in an over current state". Only hub 2 port 0 connected, and there was no
+keyboard or mouse. rv69 worked on the same hardware.
+
+**What was ruled out:**
+- The loader: vf2lite-06 with the rv69 loader failed the same way.
+- The source: the kernel and add-on diff to rv69 is only wallpapers and Tracker.
+- dw_mmc GPIO62: logged behaviour is identical on both.
+
+**Cause (from the serial logs):** every working VF2 boot was a hand boot. The user
+waited for U-Boot's distro boot to fail and typed load/bootefi at the prompt. Distro
+boot runs PCIe enumeration first ("starfive_pcie pcie@2B000000: Port link up").
+Every failing boot was the partition-3 autoboot, whose boot2 jumps straight to
+bootefi, so U-Boot never brings up PCIe and the VL805 behind it. Haiku's own PCIe
+bring-up alone leaves the VL805 reporting false over-current on its ports.
+
+**Fix:** boot2 in vf2_uEnv.txt (build/jam/images/MMCImage) now runs `pci enum`
+before loading the EFI loader. This is our own image's script, not a firmware or
+env change. On the Lite, PCIe0 has no link and the command just returns.
+
+**Later:** find what U-Boot's enumeration does that our starfive_pcie driver doesn't
+(PERST timing, a VL805 settle delay, or bridge setup), so Beacon doesn't depend on
+it. Then the image also works with boot paths that skip `pci enum`.
