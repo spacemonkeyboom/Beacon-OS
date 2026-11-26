@@ -7,6 +7,7 @@
 | beacon-wallpaper-3.bmp | supplied by the Beacon maintainer | 2026-11-24 | 1792x1008; default wallpaper from 0.4 |
 | beacon-wallpaper-4.bmp | supplied by the Beacon maintainer | 2026-11-24 | 1792x1008; converted to BMP (JPEG metadata dropped); default planned for the Vulkan release |
 | beacon-wallpaper-5.bmp | supplied by the Beacon maintainer | 2026-11-25 | converted to BMP (JPEG metadata dropped) |
+| beacon-wallpaper-6.bmp | supplied by the Beacon maintainer | 2026-11-25 | 1792x1008; converted to BMP (JPEG metadata dropped) |
 | beacon-wallpaper-christmas.bmp | supplied by the Beacon maintainer | 2026-11-25 | holiday wallpaper; converted to BMP (JPEG metadata dropped) |
 | beacon-wallpaper-christmas-2.bmp | supplied by the Beacon maintainer | 2026-11-25 | holiday wallpaper, second variant; converted to BMP (JPEG metadata dropped) |
 
