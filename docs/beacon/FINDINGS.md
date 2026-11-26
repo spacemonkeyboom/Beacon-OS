@@ -429,3 +429,10 @@ happens with both the threaded and the basic render loop. Qt 5 Quick worked
 with the same libGL/Mesa, so the suspect is the context format Qt 6
 requests (version/profile, depth/stencil) or the Qt 6 plugin's context setup.
 Open.
+
+## Rust std runs on riscv64 Haiku
+
+*Confirmed on rv69.* With a custom target spec and `-Z build-std`, nightly
+Rust's std builds for riscv64 Haiku unchanged and passes a std test on the
+board (threads, TLS, files, time, networking, unwinding). Details and the
+target spec: docs/beacon/rust/.
