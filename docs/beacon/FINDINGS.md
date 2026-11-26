@@ -627,3 +627,32 @@ env change. On the Lite, PCIe0 has no link and the command just returns.
 **Later:** find what U-Boot's enumeration does that our starfive_pcie driver doesn't
 (PERST timing, a VL805 settle delay, or bridge setup), so Beacon doesn't depend on
 it. Then the image also works with boot paths that skip `pci enum`.
+
+## VisionFive 2 Lite: the on-board Wi-Fi is an AIC8800D80 on sdio1
+
+**Status:** identified from sources; probe in vf2lite-08, waiting for a hardware test.
+
+**The module:** LB-LINK BL-M8800DS2-40 (AIC8800D80, Wi-Fi 6, BT 5.4), fitted only on some
+boards. Sources: CNX Software's review, LB-LINK's product page, and the StarFive Linux 6.12
+vendor branch (JH7110_VisionFive2_6.12.y_devel, 4cecf169f3).
+- **Wi-Fi:** SDIO on mmc1 / sdio1 (0x16020000), 4-bit, non-removable, max 50 MHz.
+- **Bluetooth:** UART1 with RTS/CTS on GPIO 22-25.
+
+**Power:** WL_REG_ON is GPIO33, high = on. The vendor dw_mmc-starfive.c drives it low for
+10 ms, then high, then waits 10 ms. There's no pwrseq node and no 32 kHz clock in the DT.
+
+**The vendor U-Boot DT disables sdio1**, so U-Boot never muxes its pins. On the Lite only,
+dw_mmc now:
+- attaches to sdio1 anyway;
+- turns its SYSCRG clocks on and deasserts its AHB reset if they were left off;
+- muxes CLK GPIO10, CMD GPIO9 and DATA GPIO11/12/7/8, like Linux's mmc1_pins;
+- powers the module through GPIO33 before probing.
+
+The SDIO bus manager then prints the card's CIS vendor and device IDs.
+
+**Driver:**
+- Vendor Linux aic8800 (aic8800_fdrv + aic_load_fw): about 65k lines, RivieraWaves/AICSemi
+  copyright, MODULE_LICENSE("GPL"), no per-file SPDX tags. It's a cfg80211 FullMAC driver.
+- Firmware comes from /lib/firmware/aic8800_sdio: fmacfw_8800d80_u02.bin,
+  fw_patch_8800d80_u02.bin, fw_adid_8800d80_u02.bin, lmacfw_rf_8800d80_u02.bin,
+  calibmode_8800d80.bin. Its redistribution license is still to be found.
