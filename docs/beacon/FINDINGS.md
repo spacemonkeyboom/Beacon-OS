@@ -606,3 +606,13 @@ Patch: ~/beacon/firefox/ff160/notes/beacon-firefox-160.0.1-riscv64.patch (MPL-2.
 - Toolchain note: Debian's clang 19 + lld 19 handle --target=riscv64-unknown-haiku with the
   Haiku sysroot; HaikuPorts' lld >= 21 requirement is not enforced by configure (libxul link
   with lld 19 still unproven).
+
+## NSPR cross-build silently drops its Haiku code (confirmed on the board)
+
+Cross-configuring NSPR 4.39 for riscv64-unknown-haiku sets OS_ARCH from the target triple in
+lowercase ("haiku"), but HaikuPorts' Makefiles test `ifeq ($(OS_ARCH),Haiku)`. Result: prhaiku.cpp
+(the BTimeZone wrapper) and -lbe are left out, and libnspr4.so fails to load with "Could not resolve
+symbol '_PR_Haiku_GetLocalTimeOffset'". Fix: map `haiku*) OS_ARCH=Haiku ;;` in configure(.in).
+NSS is not affected when built with OS_ARCH=Haiku OS_TARGET=Haiku. Found 2026-11-26 by the Firefox
+library test on an Orange Pi RV; after the fix 15/16 checks pass (ffi, libevent, fontconfig/FreeType,
+HarfBuzz, cairo/pixman, VP9, NSS, dlopen). VP8 encode+decode still fails (open).
