@@ -693,3 +693,13 @@ Patch: ~/beacon/firefox/ff160/notes/beacon-firefox-160.0.1-riscv64.patch (MPL-2.
 - Toolchain note: Debian's clang 19 + lld 19 handle --target=riscv64-unknown-haiku with the
   Haiku sysroot; HaikuPorts' lld >= 21 requirement is not enforced by configure (libxul link
   with lld 19 still unproven).
+
+**vf2lite-11 result (2026-11-26): chip confirmed on hardware.** With dw_mmc's own probe skipped on the
+Lite's sdio1, so that the bus manager sends the chip's first CMD5, the card enumerates:
+- fn0 CIS MANFID vendor 0xc8a1, device 0x0082;
+- fn2 MANFID 0xc8a1 / 0x0182, FUNCE max block 2048;
+- no high-speed support; 4-bit at 25 MHz; the 4-bit CMD53 data check passes.
+
+0xc8a1 / 0x0082 is AICSemi's AIC8800D80 SDIO ID. One "data error at end, RINTSTS 0x8088"
+appears on the first 1-bit CMD53, before the bus-width switch. It's harmless so far and low
+priority.
