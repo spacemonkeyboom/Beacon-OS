@@ -588,3 +588,18 @@ env change. On the Lite, PCIe0 has no link and the command just returns.
 **Later:** find what U-Boot's enumeration does that our starfive_pcie driver doesn't
 (PERST timing, a VL805 settle delay, or bridge setup), so Beacon doesn't depend on
 it. Then the image also works with boot paths that skip `pci enum`.
+
+## Firefox 160.0.1 on riscv64 Beacon: two portability gaps (pending, untested on hardware)
+
+Found while cross-building Firefox (HaikuPorts recipe base) for riscv64 Beacon, 2026-11-26.
+Patch: ~/beacon/firefox/ff160/notes/beacon-firefox-160.0.1-riscv64.patch (MPL-2.0).
+
+- **xptcall:** xpcom/reflect/xptcall/md/unix/moz.build only built the riscv64 stubs for Linux.
+  Haiku riscv64 needs them too, or libxul fails to link (NS_InvokeByIndex).
+- **SpiderMonkey FlushICache:** the riscv64 JIT had no Haiku branch and hit #error. It now calls
+  clear_caches(addr, len, B_INVALIDATE_ICACHE | B_FLUSH_DCACHE); Beacon's kernel turns that into
+  fence.i locally plus an SBI remote fence.i on the other harts.
+- Also: navigator.platform/oscpu said "Haiku x86_64" regardless of CPU; now reports riscv64.
+- Toolchain note: Debian's clang 19 + lld 19 handle --target=riscv64-unknown-haiku with the
+  Haiku sysroot; HaikuPorts' lld >= 21 requirement is not enforced by configure (libxul link
+  with lld 19 still unproven).
