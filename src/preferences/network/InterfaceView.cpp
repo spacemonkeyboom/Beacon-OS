@@ -239,6 +239,14 @@ InterfaceView::_Update(bool updateWirelessNetworks)
 	else if (!fNetworkMenuField->IsHidden(fNetworkMenuField) && !isWireless)
 		fNetworkMenuField->Hide();
 
+	// Beacon: never rebuild the menu while it is open. Items removed under
+	// an open menu left BMenu tracking a dead item: the app crashed in
+	// BMenu::_SelectItem() -> BView::Invalidate() when Wi-Fi was switched
+	// off with the network menu showing.
+	if (isWireless && updateWirelessNetworks
+		&& fNetworkMenuField->Menu()->Window() != NULL)
+		updateWirelessNetworks = false;
+
 	if (isWireless && updateWirelessNetworks) {
 		// Rebuild network menu
 		BMenu* menu = fNetworkMenuField->Menu();
