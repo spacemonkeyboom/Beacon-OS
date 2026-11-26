@@ -600,6 +600,9 @@ Patch: ~/beacon/firefox/ff160/notes/beacon-firefox-160.0.1-riscv64.patch (MPL-2.
   clear_caches(addr, len, B_INVALIDATE_ICACHE | B_FLUSH_DCACHE); Beacon's kernel turns that into
   fence.i locally plus an SBI remote fence.i on the other harts.
 - Also: navigator.platform/oscpu said "Haiku x86_64" regardless of CPU; now reports riscv64.
+- **wasm signal handlers:** js/src/wasm/WasmSignalHandlers.cpp had no Haiku riscv64 context macros.
+  Beacon's riscv64 signal frame: pc = uc_mcontext.pc, vregs x[0..30] hold x1..x31, so ra = x[0],
+  sp = x[1], fp(s0) = x[7]. Checked against the kernel's arch_thread.cpp signal frame (pending, untested).
 - Toolchain note: Debian's clang 19 + lld 19 handle --target=riscv64-unknown-haiku with the
   Haiku sysroot; HaikuPorts' lld >= 21 requirement is not enforced by configure (libxul link
   with lld 19 still unproven).
