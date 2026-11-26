@@ -100,7 +100,10 @@ arch_handle_fdt(const void* fdt, int node)
 
 	// Root node: the StarFive JH7110's display engine (DC8200) does not snoop
 	// the CPU caches.
-	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110")) {
+	// The VisionFive 2 Lite vendor U-Boot DT lists only "starfive,jh7110s"
+	// (the lower-clocked JH7110S, same display engine and memory map).
+	if (dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110")
+		|| dtb_has_fdt_string(compatible, compatibleLen, "starfive,jh7110s")) {
 		sNonCoherentDisplaySoC = true;
 		// From RenkuOS (PR #490, atomozero), MIT: the display controller
 		// reads memory behind the L2 cache, so draw through the uncached

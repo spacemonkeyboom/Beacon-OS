@@ -436,3 +436,35 @@ Open.
 Rust's std builds for riscv64 Haiku unchanged and passes a std test on the
 board (threads, TLS, files, time, networking, unwinding). Details and the
 target spec: docs/beacon/rust/.
+
+## VisionFive 2 Lite: vendor U-Boot boots only from partition 3
+
+*Pending (not yet run on the board).* The StarFive SDK U-Boot for the
+VisionFive 2 Lite (starfive-tech/u-boot JH7110_VisionFive2_devel,
+include/configs/starfive-visionfive2.h) has `bootpart=3`: `sdk_boot_env`
+imports `vf2_uEnv.txt` from partition 3 and runs `${boot2}`;
+`distro_boot_env` imports `uEnv_Lite.txt` from partition 3 and runs
+`sysboot`. Our MMC image only had partitions 1 (FAT) and 2 (BFS), so the
+board would stop at the U-Boot prompt. Fix: build/jam/images/MMCImage adds a
+4 MiB FAT partition 3 after the OS partition holding `vf2_uEnv.txt`, whose
+`boot2` loads EFI/BOOT/BOOTRISCV64.EFI from partition 1 and runs `bootefi`
+with U-Boot's device tree. Boards that read partition 1 ignore it.
+
+## VisionFive 2 Lite: vendor DT says only "starfive,jh7110s"
+
+*Pending.* The Lite's vendor U-Boot DT (starfive_visionfive2_lite.dts) has
+root `compatible = "starfive,jh7110s"` only (mainline Linux lists
+`"starfive,jh7110s", "starfive,jh7110"`). The EFI loader keyed the uncached
+frame buffer alias (display engine does not snoop the L2) on
+`"starfive,jh7110"`, so on the Lite nothing drawn after hand-off would show.
+Fix: src/system/boot/platform/efi/arch/riscv64/arch_dtb.cpp also matches
+`"starfive,jh7110s"`.
+
+## VisionFive 2 Lite: sdio0 is the microSD slot, GPIO62 is a USB switch
+
+*Pending.* dw_mmc fell back to pulsing GPIO62 (the Orange Pi RV Wi-Fi
+WL_REG_ON) on JH7110 sdio0 when the DT had no mmc-pwrseq. On the Lite sdio0
+is the 4-bit microSD slot and GPIO62 drives the USB0 switch
+(jh7110-starfive-visionfive-2-lite.dtsi). Fix: the fallback now applies only
+when sdio0 is described as 8-bit, which is the VisionFive 2 vendor DT the
+Orange Pi RV gets. File: src/add-ons/kernel/busses/mmc/dw_mmc/kernel_interface.cpp.
