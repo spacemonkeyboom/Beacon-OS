@@ -504,3 +504,21 @@ off, and the first fault died in STrap -> VMAddressSpace::GetKernel()
 (NULL+0x54, no address space yet). Fix: sort the physical memory and
 allocated range lists after all removals, before computing the physical
 map. File: src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp.
+
+## VisionFive 2 Lite: USB is the on-chip Cadence controller, not a VL805
+
+*Pending (vf2lite-03).* The VisionFive 2 and the Orange Pi RV get their USB-A
+ports from a VIA VL805 on PCIe 0. The Lite has pcie0 disabled; its ports
+(1x USB 3.0 + 3x USB 2.0 through a hub) sit on the JH7110's own Cadence USB 3
+block (cdns3), whose USB 3 PHY is PCIe PHY 0. vf2lite-02 had no driver for it,
+so usb_hid found no devices. Fix: new GPL add-on
+src/add-ons/kernel/busses/usb/cdns3_jh7110 (powers the block and switches the
+cdns3 dual-role logic to host, following Linux cdns3-starfive.c / drd.c and
+the StarFive PHY drivers), which publishes an "xhci_platform" node; the MIT
+xhci add-on (src/add-ons/kernel/busses/usb/xhci.cpp) gained a platform
+attachment for such nodes, and the device manager now searches busses/usb
+for device tree nodes. Two Lite-specific details: VBUS is GPIO26 (high) and
+the port switch GPIO62 (low); usb_125m is PLL0/div and PLL0 is 1.25 GHz on
+the JH7110S, so the divider is computed from the real PLL0 rate (10 instead
+of 12). The vendor DT marks the Lite's controller dr_mode "unknown"; the
+VisionFive 2 / Orange Pi RV one is "peripheral" and is left alone.
