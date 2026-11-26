@@ -378,7 +378,17 @@ platform_switch_to_logo(void)
 	beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,
 		gKernelArgs.frame_buffer.physical_buffer.size);
 #endif
+#ifdef __riscv
+	// Beacon: the firmware powers the display off at ExitBootServices and
+	// arch_start turns it back on, which blanked the splash for seconds and
+	// showed it twice. Keep the RISC-V screen up while the loader works and
+	// draw the splash once, after the display is back (arch_start.cpp).
+	video_set_splash_deferred(true);
 	video_display_splash(gKernelArgs.frame_buffer.physical_buffer.start);
+	beacon_draw_riscv_screen();
+#else
+	video_display_splash(gKernelArgs.frame_buffer.physical_buffer.start);
+#endif
 #ifdef __riscv
 	beacon_flush_display_range(gKernelArgs.frame_buffer.physical_buffer.start,
 		gKernelArgs.frame_buffer.physical_buffer.size);
