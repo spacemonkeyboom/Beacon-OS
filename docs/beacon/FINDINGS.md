@@ -522,3 +522,18 @@ the port switch GPIO62 (low); usb_125m is PLL0/div and PLL0 is 1.25 GHz on
 the JH7110S, so the divider is computed from the real PLL0 rate (10 instead
 of 12). The vendor DT marks the Lite's controller dr_mode "unknown"; the
 VisionFive 2 / Orange Pi RV one is "peripheral" and is left alone.
+
+## JH7110: frame buffer RAM was never reserved once the uncached alias was on
+
+*Seen on the VF2 Lite (vf2lite-02, green lines over the splash and desktop
+on some boots, clean on others with identical display/clock logs); fix in
+vf2lite-04, pending.* With the uncached DDR alias (RenkuOS #490),
+frame_buffer.physical_buffer.start is RAM address + 0x4_0000_0000, and the
+loader removed that alias range from RAM instead of the real one: the log
+shows "frame buffer 0x4fe000000-0x4fe7e9000 removed from RAM" while the
+physical ranges still contain 0xfe000000-0xfe7e9000. The kernel could then
+hand frame buffer pages to anything, so whatever landed there showed on
+screen (intermittent, depends on allocation). Affects every JH7110 board
+since the alias change, the Orange Pi RV and VisionFive 2 included. Fix:
+src/system/boot/platform/efi/arch/riscv64/arch_mmu.cpp subtracts
+gFrameBufferAliasOffset before removing the range.

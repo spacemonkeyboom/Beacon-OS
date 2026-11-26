@@ -392,9 +392,14 @@ arch_mmu_generate_post_efi_page_tables(size_t memoryMapSize, efi_memory_descript
 	// inside ordinary RAM in the EFI memory map. Never let the kernel hand those
 	// pages out, or the screen shows (and is wiped by) unrelated data.
 	if (gKernelArgs.frame_buffer.enabled) {
-		uint64 fbStart = ROUNDDOWN(
-			(uint64)gKernelArgs.frame_buffer.physical_buffer.start, B_PAGE_SIZE);
-		uint64 fbEnd = ROUNDUP((uint64)gKernelArgs.frame_buffer.physical_buffer.start
+		// On the JH7110 physical_buffer.start is the uncached DDR alias
+		// (RAM address + gFrameBufferAliasOffset); the pages to keep away
+		// from the kernel are the RAM ones underneath it.
+		uint64 fbRam = gKernelArgs.frame_buffer.physical_buffer.start;
+		if (gFrameBufferAliasOffset != 0 && fbRam >= gFrameBufferAliasOffset)
+			fbRam -= gFrameBufferAliasOffset;
+		uint64 fbStart = ROUNDDOWN(fbRam, B_PAGE_SIZE);
+		uint64 fbEnd = ROUNDUP(fbRam
 			+ gKernelArgs.frame_buffer.physical_buffer.size, B_PAGE_SIZE);
 		remove_physical_memory_range(fbStart, fbEnd - fbStart);
 		remove_physical_allocated_range(fbStart, fbEnd - fbStart);
