@@ -75,7 +75,7 @@ BackgroundImage::GetBackgroundImage(const BNode* node, bool isDesktop)
 	attr_info info;
 	if (node->GetAttrInfo(kBackgroundImageInfo, &info) != B_OK) {
 		// Beacon: on first run the Desktop has no background yet; give it the
-		// Beacon wallpaper (3; 4 becomes the default with the Vulkan release),
+		// Beacon wallpaper (6, chosen by the maintainer 2026-11-25),
 		// written as a normal setting so the Backgrounds
 		// preferences show it and can change it.
 		BPath wallpaper;
