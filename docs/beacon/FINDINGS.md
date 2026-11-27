@@ -755,3 +755,15 @@ log shows why the card went quiet and how it came back.
   for U04). The upstream RFC accepts U02 only. AIC's own SDIO BSP (radxa-pkg/aic8800
   aicbsp_driver_fw_init) runs U02 and U03 the same way with the *_u02 firmware, so aic8800 now
   accepts 3 and 7 (pending).
+
+**vf2lite-14 result (2026-11-26): MILESTONE 1 CONFIRMED ON HARDWARE (AIC8800D80 firmware up).**
+- pwmdac reports "VF2 Lite: no PWM-DAC jack ... pinmux untouched". HDMI audio still works (the user
+  heard the startup sound).
+- The card answered at 26.8 s after boot with NO power cycle, which confirms the GPIO33 / PWM-DAC
+  root cause.
+- Boot ROM chip word 0xf3078820 (revision 7, U03). The 327440-byte fmacfw_8800d80_u02.bin uploaded
+  in 163 ms (polled, 1 KB block writes). Firmware version word 0x06090101, boot status 0.
+- MM_VERSION reports lmac 6.9.1.1, features 0x01e877d7, max 32 stations. The MAC address comes from
+  the chip's efuse (xx:xx).
+- /dev/net/aic8800/0 appears, net_server starts it, and Network prefs shows the Wi-Fi interface.
+  Link stays down because scanning is not written yet (milestone 2).
