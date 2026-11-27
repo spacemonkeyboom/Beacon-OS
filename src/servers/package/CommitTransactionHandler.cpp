@@ -710,12 +710,33 @@ CommitTransactionHandler::_PrepareFirstBootPackages()
 			(int) count, transactionPath.Path());
 	}
 
+	int32 failedCount = 0;
 	for (int32 i = 0; i < count; i++) {
 		Package* package = fPackagesToActivate.ItemAt(i);
 		fAddedPackages.insert(package);
 		INFORM("Doing first boot processing #%d for package %s.\n",
 			(int) i, package->FileName().String());
-		_PreparePackageToActivate(package);
+		// Beacon: one broken package must not stop first boot processing of
+		// all packages after it (their users, groups, settings and writable
+		// files, and their post-install scripts). Log it and go on.
+		try {
+			_PreparePackageToActivate(package);
+		} catch (Exception& exception) {
+			failedCount++;
+			fCurrentPackage = NULL;
+			BCommitTransactionResult result;
+			exception.SetOnResult(result);
+			result.SetError(exception.Error());
+			if (result.ErrorPackage().IsEmpty())
+				result.SetErrorPackage(package->FileName());
+			ERROR("First boot processing of package %s failed, continuing"
+				" with the other packages: %s\n", package->FileName().String(),
+				result.FullErrorMessage().String());
+		}
+	}
+	if (failedCount > 0) {
+		ERROR("First boot processing: %d of %d packages failed.\n",
+			(int)failedCount, (int)count);
 	}
 }
 
@@ -925,6 +946,17 @@ CommitTransactionHandler::_AddGlobalWritableFile(Package* package,
 
 		status_t error = stackSourceDirectory.SetTo(
 			&extractedFilesDirectory, sourceParentPath);
+		if (error == B_ENTRY_NOT_FOUND) {
+			// Beacon: the package declares an included global writable file
+			// it does not contain (e.g. HaikuPorts' less-451-1 lists
+			// settings/etc/sysless but ships no settings/ at all). There is
+			// nothing to install, so skip the file instead of failing the
+			// whole transaction.
+			WARN("Package \"%s\" declares global writable file \"%s\", "
+				"but does not contain it; skipping it.\n",
+				package->FileName().String(), file.Path().String());
+			return;
+		}
 		if (error != B_OK) {
 			throw Exception(B_TRANSACTION_FAILED_TO_OPEN_DIRECTORY)
 				.SetPath1(_GetPath(
