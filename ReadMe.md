@@ -16,11 +16,11 @@ trademarks of RISC-V International; Beacon is not affiliated with them.
 
 Development is AI-assisted.
 
-## 🎉 BEACON 0.5: ONE IMAGE, THREE BOARDS, AND WI-FI ON THE VISIONFIVE 2 LITE! 🎉
+## 🎉 BEACON 0.5.1: ONE IMAGE, THREE BOARDS, AND WI-FI ON THE VISIONFIVE 2 LITE! 🎉
 
 # ✅ Orange Pi RV  ✅ VisionFive 2 Lite  ✅ VisionFive 2
 
-**[Beacon 0.5](https://github.com/spacemonkeyboom/Beacon-OS/releases/tag/v0.5)
+**[Beacon 0.5.1](https://github.com/spacemonkeyboom/Beacon-OS/releases/tag/v0.5.1)
 (November 26, 2026):** one SD card image boots the **Orange Pi RV**, the
 **VisionFive 2 Lite** and the **VisionFive 2**, with no changes to the boards'
 firmware. The **Lite's built-in Wi-Fi works**, with a new Beacon driver for its
