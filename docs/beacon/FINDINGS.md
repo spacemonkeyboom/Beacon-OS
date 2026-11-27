@@ -893,3 +893,15 @@ lost out varied (on the RV, openssh came before less). Fix: skip a declared writ
 does not contain (warning), and in first boot mode log a failing package and continue with the rest
 ("First boot processing: N of M packages failed."). A scan of all downloaded .hpkg files found less to be
 the only package with this defect. File: src/servers/package/CommitTransactionHandler.cpp.
+
+## Firefox 160 on riscv64 Haiku: nsSystemInfo.cpp uses x86-only CPUID (pending)
+
+*Status: fix applied in the Netfarer build, waiting for the first libxul link.*
+
+The HaikuPorts Firefox patchset's Haiku CPU-information code in
+`xpcom/base/nsSystemInfo.cpp` calls `get_cpuid()` and uses `cpuid_info`. These
+exist only on x86 Haiku, so the file fails on riscv64 with 19 errors. The fix:
+guard the CPUID block with `#if defined(__x86_64__) || defined(__i386__)`.
+Other architectures still get the core count and frequency from
+`get_cpu_info()`. The patch is in the Netfarer repository
+(`firefox/patches/beacon-firefox-160.0.1-riscv64.patch`).
