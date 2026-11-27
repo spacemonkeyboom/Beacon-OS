@@ -21,7 +21,7 @@ SYSTEM_BIN += [ FFilterByBuildFeatures
 	CortexAddOnHost
 	dpms
 	fatfixname
-	FirstBootPrompt
+	# Beacon: no FirstBootPrompt; Beacon runs from the SD card and boots straight to the desktop
 	<bin>i2c@x86,x86_64
 	installsound
 	mail
