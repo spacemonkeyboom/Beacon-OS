@@ -11,7 +11,16 @@
  *                                  firmware upload, start from bootrom
  *   aic8800_bsp/aic_chip_8800d80.c, aic8800d80_compat.c
  *                                  D80 revision check, patch config
- *   aic8800_fdrv/rwnx_msg_tx.c     MM_RESET / MM_VERSION / MM_GET_MAC_ADDR
+ *   aic8800_fdrv/rwnx_msg_tx.c     MM_RESET / MM_VERSION / MM_GET_MAC_ADDR,
+ *                                  MM_SET_STACK_START, MM_SET_TXPWR_IDX_LVL,
+ *                                  MM_SET_RF_CALIB, ME_CONFIG, ME_CHAN_CONFIG,
+ *                                  MM_START, MM_ADD_IF, SCANU_START
+ *   aic8800_fdrv/aicwf_compat_8800d80.c, aicwf_chip_8800d80.c,
+ *   rwnx_platform.c                RF init order and the built-in userconfig
+ *                                  TX power defaults (txpwr_lvl_v3 gp[0])
+ *   aic8800_fdrv/rwnx_msg_rx.c     SCANU_RESULT_IND / SCANU_START_CFM
+ *   aic8800_fdrv/rwnx_main.c, rwnx_mod_params.c
+ *                                  open order, module parameter defaults
  *
  * Copyright (C) RivieraWaves 2012-2019
  * Copyright (C) 2020-2024 AIC semiconductor.
@@ -23,7 +32,9 @@
  * data/firmware/aic8800/); without it the driver says so and does not attach.
  *
  * Milestone 1 ("fw up"): upload and start the firmware, read the MAC address
- * and firmware version. Scanning and joining are not implemented yet.
+ * and firmware version. Milestone 2 (scan): RF init, ME config, a station
+ * interface, SCANU_START, scan results into net80211, card interrupt for RX.
+ * Joining (milestone 3) is not implemented yet.
  */
 
 #include <sys/param.h>
@@ -34,6 +45,9 @@
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/mbuf.h>
+#include <sys/mutex.h>
+#include <sys/task.h>
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -135,7 +149,33 @@ struct aic_softc {
 	uint32_t				 sc_bootstatus;
 	struct mm_version_cfm	 sc_version;
 	int						 sc_fw_up;
+
+	/* milestone 2: scan */
+	int						 sc_5g;			/* MM_SET_STACK_START_CFM */
+	int						 sc_vif_up;		/* MM_START + MM_ADD_IF done */
+	uint8_t					 sc_vif_idx;
+	int						 sc_scanning;	/* SCANU_START sent, no CFM yet */
+	int						 sc_scan_results;
+	int						 sc_scans;
+	void					*sc_ih;
+
+	/* firmware indications, handed from the RX path to a task */
+	TAILQ_HEAD(, aic_ind)	 sc_indq;
+	struct mutex			 sc_indq_mtx;
+	int						 sc_indq_len;
+	struct task				 sc_ind_task;
 };
+
+struct aic_ind {
+	TAILQ_ENTRY(aic_ind)	 link;
+	uint16_t				 id;
+	uint16_t				 len;
+	uint8_t					 data[];
+};
+
+#define AIC_INDQ_MAX			256
+
+static void aic_ind_task(void *);
 
 
 #define SDIO_OPS(sc)	((sc)->sc_sdmmc.sc_sdio)
@@ -397,6 +437,34 @@ aic_rx_msg(struct aic_softc *sc, const uint8_t *msg, size_t avail)
 			sc->sc_cfm_done = 1;
 			return;
 		}
+	}
+
+	/*
+	 * An indication (scan result, scan done, ...). The RX path runs with
+	 * the SDIO lock held, and handling these calls into net80211, which
+	 * may send commands back; so queue them for aic_ind_task().
+	 */
+	if (sc->sc_fw_up && sc->sc_ic.ic_if.if_softc == sc) {
+		struct aic_ind *ind;
+
+		mtx_enter(&sc->sc_indq_mtx);
+		if (sc->sc_indq_len >= AIC_INDQ_MAX) {
+			mtx_leave(&sc->sc_indq_mtx);
+			return;
+		}
+		mtx_leave(&sc->sc_indq_mtx);
+		ind = malloc(sizeof(*ind) + param_len, M_DEVBUF, M_NOWAIT);
+		if (ind == NULL)
+			return;
+		ind->id = id;
+		ind->len = param_len;
+		memcpy(ind->data, msg + 12, param_len);
+		mtx_enter(&sc->sc_indq_mtx);
+		TAILQ_INSERT_TAIL(&sc->sc_indq, ind, link);
+		sc->sc_indq_len++;
+		mtx_leave(&sc->sc_indq_mtx);
+		task_add(systq, &sc->sc_ind_task);
+		return;
 	}
 
 	if (sc->sc_unsolicited_logged < 16) {
@@ -708,6 +776,164 @@ aic_patch_config_8800d80(struct aic_softc *sc)
 }
 
 
+/* #pragma mark - LMAC configuration (aic8800_fdrv rwnx_msg_tx.c) */
+
+
+/* non-DFS 5 GHz channels (no radar detection here) */
+static const uint8_t aic_5ghz_channels[] = {
+	36, 40, 44, 48, 149, 153, 157, 161, 165
+};
+
+#define AIC_CHAN_TX_POWER		20		/* dBm, as the Linux regdb gives */
+
+
+/* rwnx_send_set_stack_start_req(1, 0, BIT(5), 0) (aic8800d80_set_stack_start) */
+static int
+aic_stack_start(struct aic_softc *sc)
+{
+	struct mm_set_stack_start_req req;
+	struct mm_set_stack_start_cfm cfm;
+	int error;
+
+	memset(&req, 0, sizeof(req));
+	req.is_stack_start = 1;
+	req.efuse_valid = 0;
+	req.set_vendor_info = 1 << 5;
+	req.fwtrace_redir = 0;
+	memset(&cfm, 0, sizeof(cfm));
+	error = aic_cmd(sc, MM_SET_STACK_START_REQ, TASK_MM, &req, sizeof(req),
+		MM_SET_STACK_START_CFM, &cfm, sizeof(cfm), AIC_CMD_TIMEOUT_MS);
+	if (error == 0) {
+		sc->sc_5g = cfm.is_5g_support != 0;
+		printf("%s: stack start: 5 GHz %s, vendor info 0x%02x\n", AIC_NAME,
+			sc->sc_5g ? "supported" : "not supported", cfm.vendor_info);
+	}
+	return error;
+}
+
+
+/*
+ * aicwf_set_rf_config_8800d80(): TX power levels (the driver's built-in
+ * userconfig defaults, txpwr_lvl_v3_gp[0]; the adj and ofst2x tables are
+ * disabled by default so the Linux driver does not send them), then the RF
+ * calibration.
+ */
+static int
+aic_rf_init(struct aic_softc *sc)
+{
+	static const s8 lvl_11b_11ag_2g4[12]
+		= { 20, 20, 20, 20, 20, 20, 20, 20, 18, 18, 16, 16 };
+	static const s8 lvl_11n_11ac_2g4[10]
+		= { 20, 20, 20, 20, 18, 18, 16, 16, 16, 16 };
+	static const s8 lvl_11ax_2g4[12]
+		= { 20, 20, 20, 20, 18, 18, 16, 16, 16, 16, 15, 15 };
+	static const s8 lvl_11a_5g[12]
+		= { (s8)0x80, (s8)0x80, (s8)0x80, (s8)0x80, 20, 20, 20, 20, 18, 18,
+			16, 16 };
+	static const s8 lvl_11n_11ac_5g[10]
+		= { 20, 20, 20, 20, 18, 18, 16, 16, 16, 15 };
+	static const s8 lvl_11ax_5g[12]
+		= { 20, 20, 20, 20, 18, 18, 16, 16, 16, 15, 14, 14 };
+	struct mm_set_txpwr_lvl_req lvl;
+	struct mm_set_rf_calib_req cal;
+	struct mm_set_rf_calib_cfm calcfm;
+	int error;
+
+	memset(&lvl, 0, sizeof(lvl));
+	lvl.txpwr_lvl_v3.enable = 1;
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11b_11ag_2g4, lvl_11b_11ag_2g4, 12);
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11n_11ac_2g4, lvl_11n_11ac_2g4, 10);
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11ax_2g4, lvl_11ax_2g4, 12);
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11a_5g, lvl_11a_5g, 12);
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11n_11ac_5g, lvl_11n_11ac_5g, 10);
+	memcpy(lvl.txpwr_lvl_v3.pwrlvl_11ax_5g, lvl_11ax_5g, 12);
+	error = aic_cmd(sc, MM_SET_TXPWR_IDX_LVL_REQ, TASK_MM, &lvl, sizeof(lvl),
+		MM_SET_TXPWR_IDX_LVL_CFM, NULL, 0, AIC_CMD_TIMEOUT_MS);
+	if (error != 0)
+		return error;
+
+	memset(&cal, 0, sizeof(cal));
+	cal.cal_cfg_24g = 0x0f8f;		/* aic8800d80_set_rf_calib_cfg() */
+	cal.cal_cfg_5g = 0x0f0f;
+	cal.param_alpha = 0x0c34c008;
+	cal.bt_calib_en = 0;
+	cal.bt_calib_param = 0x264203;
+	cal.xtal_cap = 0;				/* userconfig xtal_cap disabled */
+	cal.xtal_cap_fine = 0;
+	memset(&calcfm, 0, sizeof(calcfm));
+	error = aic_cmd(sc, MM_SET_RF_CALIB_REQ, TASK_MM, &cal, sizeof(cal),
+		MM_SET_RF_CALIB_CFM, &calcfm, sizeof(calcfm), AIC_CMD_TIMEOUT_MS);
+	if (error == 0)
+		printf("%s: RF calibrated (rx gain 2.4G 0x%08x)\n", AIC_NAME,
+			calcfm.rxgain_24g_addr);
+	return error;
+}
+
+
+/*
+ * rwnx_send_me_config_req() with the Linux driver's defaults: HT on
+ * (MCS 0-7, 20/40 MHz, SGI, LDPC, STBC), VHT/HE off for now, power save off
+ * (the Linux default is on; keep it simple while the driver polls).
+ */
+static int
+aic_me_config(struct aic_softc *sc)
+{
+	struct me_config_req req;
+
+	memset(&req, 0, sizeof(req));
+	req.ht_supp = true;
+	req.ht_cap.ht_capa_info = htole16(0x0001 | 0x0002 | 0x0020 | 0x0040
+		| 0x0080 | 0x0100);
+	req.ht_cap.a_mpdu_param = 3 | (7 << 2);	/* 64K, 16 us density */
+	req.ht_cap.mcs_rate[0] = 0xff;
+	req.ht_cap.mcs_rate[12] = 0x01;			/* TX MCS set defined */
+	req.vht_supp = false;
+	req.he_supp = false;
+	req.ps_on = false;
+	req.dpsm = false;
+	req.tx_lft = 1000;						/* RWNX_TX_LIFETIME_MS */
+	req.ant_div_on = false;
+	req.phy_bw_max = PHY_CHNL_BW_40;
+	return aic_cmd(sc, ME_CONFIG_REQ, TASK_ME, &req, sizeof(req),
+		ME_CONFIG_CFM, NULL, 0, AIC_CMD_TIMEOUT_MS);
+}
+
+
+/* rwnx_send_me_chan_config_req(): 2.4 GHz 1-13, non-DFS 5 GHz */
+static int
+aic_chan_config(struct aic_softc *sc)
+{
+	struct me_chan_config_req *req;
+	unsigned i;
+	int error;
+
+	req = malloc(sizeof(*req), M_DEVBUF, M_WAITOK | M_ZERO);
+	if (req == NULL)
+		return ENOMEM;
+	for (i = 1; i <= 13; i++) {
+		struct mac_chan_def *c = &req->chan2G4[req->chan2G4_cnt++];
+		c->band = 0;	/* NL80211_BAND_2GHZ */
+		c->freq = ieee80211_ieee2mhz(i, IEEE80211_CHAN_2GHZ);
+		c->flags = 0;
+		c->tx_power = AIC_CHAN_TX_POWER;
+	}
+	if (sc->sc_5g) {
+		for (i = 0; i < nitems(aic_5ghz_channels); i++) {
+			struct mac_chan_def *c = &req->chan5G[req->chan5G_cnt++];
+			c->band = 1;	/* NL80211_BAND_5GHZ */
+			c->freq = ieee80211_ieee2mhz(aic_5ghz_channels[i],
+				IEEE80211_CHAN_5GHZ);
+			c->flags = 0;
+			c->tx_power = AIC_CHAN_TX_POWER;
+		}
+	}
+	error = aic_cmd(sc, ME_CHAN_CONFIG_REQ, TASK_ME, req, sizeof(*req),
+		ME_CHAN_CONFIG_CFM, NULL, 0, AIC_CMD_TIMEOUT_MS);
+	free(req, M_DEVBUF, sizeof(*req));
+	return error;
+}
+
+
 /*
  * aicbsp_driver_fw_init() + aicwifi_init() for the D80, then the first
  * fdrv requests (rwnx_send_get_macaddr_req, rwnx_send_reset,
@@ -775,6 +1001,14 @@ aic_fw_init(struct aic_softc *sc)
 	printf("%s: firmware started, boot status 0x%x\n", AIC_NAME,
 		sc->sc_bootstatus);
 
+	/* rwnx_platform_init order: stack start, RF init, MAC, reset, version */
+	if ((error = aic_stack_start(sc)) != 0)
+		return error;
+	if ((error = aic_rf_init(sc)) != 0) {
+		printf("%s: RF init failed\n", AIC_NAME);
+		return error;
+	}
+
 	memset(&macreq, 0, sizeof(macreq));
 	macreq.get = htole32(1);
 	memset(&maccfm, 0, sizeof(maccfm));
@@ -812,6 +1046,11 @@ aic_fw_init(struct aic_softc *sc)
 		sc->sc_version.version_lmac & 0xff,
 		sc->sc_version.features, sc->sc_version.max_sta_nb,
 		ether_sprintf(ic->ic_myaddr));
+	if ((error = aic_me_config(sc)) != 0
+		|| (error = aic_chan_config(sc)) != 0) {
+		printf("%s: ME configuration failed\n", AIC_NAME);
+		return error;
+	}
 	if (sc->sc_data_frames > 0)
 		printf("%s: %d data frames seen during start\n", AIC_NAME,
 			sc->sc_data_frames);
@@ -820,20 +1059,284 @@ aic_fw_init(struct aic_softc *sc)
 }
 
 
-/* #pragma mark - net80211 (milestone 1: interface only, no scan yet) */
+/* #pragma mark - card interrupt */
+
+
+/*
+ * SDIO card interrupt (aicwf_sdio_hal_irqhandler). Called from the bus
+ * manager's IRQ thread (through the shim, with Giant held), never with the
+ * bus held. Drains the chip; indications are queued for aic_ind_task().
+ */
+static int
+aic_intr(void *arg)
+{
+	struct aic_softc *sc = arg;
+	int i;
+
+	rw_enter_write(&sc->sc_sdmmc.sc_lock);
+	for (i = 0; i < 32; i++) {
+		if (aic_rx_poll(sc) <= 0)
+			break;
+	}
+	rw_exit(&sc->sc_sdmmc.sc_lock);
+	return 1;
+}
+
+
+/* #pragma mark - net80211 (milestone 2: scan) */
+
+
+/* send one LMAC request from net80211 context (takes the SDIO lock) */
+static int
+aic_cmd_locked(struct aic_softc *sc, uint16_t id, uint16_t dest,
+	const void *param, uint16_t param_len, uint16_t cfm_id, void *cfm,
+	size_t cfm_len)
+{
+	int error;
+
+	rw_enter_write(&sc->sc_sdmmc.sc_lock);
+	error = aic_cmd(sc, id, dest, param, param_len, cfm_id, cfm, cfm_len,
+		AIC_CMD_TIMEOUT_MS);
+	rw_exit(&sc->sc_sdmmc.sc_lock);
+	return error;
+}
+
+
+/* rwnx_open(): MM_START once, then one station interface (MM_ADD_IF) */
+static int
+aic_vif_up(struct aic_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct mm_start_req start;
+	struct mm_add_if_req add;
+	struct mm_add_if_cfm addcfm;
+	int error;
+
+	if (sc->sc_vif_up)
+		return 0;
+
+	memset(&start, 0, sizeof(start));
+	start.uapsd_timeout = 300;		/* rwnx_mod_params defaults */
+	start.lp_clk_accuracy = 20;
+	error = aic_cmd_locked(sc, MM_START_REQ, TASK_MM, &start, sizeof(start),
+		MM_START_CFM, NULL, 0);
+	if (error != 0)
+		return error;
+
+	memset(&add, 0, sizeof(add));
+	add.type = MM_STA;
+	memcpy(add.addr.array, ic->ic_myaddr, ETHER_ADDR_LEN);
+	add.p2p = false;
+	memset(&addcfm, 0, sizeof(addcfm));
+	error = aic_cmd_locked(sc, MM_ADD_IF_REQ, TASK_MM, &add, sizeof(add),
+		MM_ADD_IF_CFM, &addcfm, sizeof(addcfm));
+	if (error != 0)
+		return error;
+	if (addcfm.status != 0) {
+		printf("%s: firmware refused the station interface (status %u)\n",
+			AIC_NAME, addcfm.status);
+		return EIO;
+	}
+	sc->sc_vif_idx = addcfm.inst_nbr;
+	sc->sc_vif_up = 1;
+	printf("%s: station interface up (vif %u)\n", AIC_NAME, sc->sc_vif_idx);
+	return 0;
+}
+
+
+/* rwnx_send_scanu_req(): all configured channels, wildcard or desired SSID */
+static int
+aic_scan(struct aic_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct scanu_start_req *req;
+	int chan, error;
+
+	if (sc->sc_scanning)
+		return 0;
+	req = malloc(sizeof(*req), M_DEVBUF, M_WAITOK | M_ZERO);
+	if (req == NULL)
+		return ENOMEM;
+
+	req->vif_idx = sc->sc_vif_idx;
+	for (chan = 1; chan <= IEEE80211_CHAN_MAX
+			&& req->chan_cnt < SCAN_CHANNEL_MAX; chan++) {
+		struct ieee80211_channel *c = &ic->ic_channels[chan];
+		struct mac_chan_def *d;
+		if (c->ic_freq == 0)
+			continue;
+		d = &req->chan[req->chan_cnt++];
+		d->freq = c->ic_freq;
+		d->band = IEEE80211_IS_CHAN_5GHZ(c) ? 1 : 0;
+		d->flags = 0;
+		d->tx_power = AIC_CHAN_TX_POWER;
+	}
+	/* one SSID: the wanted one (finds hidden networks) or the wildcard */
+	req->ssid_cnt = 1;
+	if (ic->ic_des_esslen > 0 && ic->ic_des_esslen <= MAC_SSID_LEN) {
+		req->ssid[0].length = ic->ic_des_esslen;
+		memcpy(req->ssid[0].array, ic->ic_des_essid, ic->ic_des_esslen);
+	}
+	memset(&req->bssid, 0xff, sizeof(req->bssid));
+	req->no_cck = false;
+	req->add_ies = 0;
+	req->add_ie_len = 0;
+
+	sc->sc_scanning = 1;
+	sc->sc_scan_results = 0;
+	error = aic_cmd_locked(sc, SCANU_START_REQ, TASK_SCANU, req, sizeof(*req),
+		SCANU_START_CFM_ADDTIONAL, NULL, 0);
+	if (error != 0)
+		sc->sc_scanning = 0;
+	else if (sc->sc_scans++ < 4)
+		printf("%s: scan started on %u channels\n", AIC_NAME, req->chan_cnt);
+	free(req, M_DEVBUF, sizeof(*req));
+	return error;
+}
+
+
+static struct mbuf *
+aic_newbuf(void)
+{
+	struct mbuf *m;
+
+	MGETHDR(m, M_DONTWAIT, MT_DATA);
+	if (m == NULL)
+		return NULL;
+	MCLGET(m, M_DONTWAIT);
+	if (!(m->m_flags & M_EXT)) {
+		m_freem(m);
+		return NULL;
+	}
+	return m;
+}
+
+
+/*
+ * rwnx_rx_scanu_result_ind(): the payload is the received beacon or probe
+ * response; hand it to net80211 as it is (like bwfm_scan_node()).
+ * Nothing about the networks found (names, addresses) is logged.
+ */
+static void
+aic_scan_result(struct aic_softc *sc, const uint8_t *data, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	const struct scanu_result_ind *ind = (const void *)data;
+	struct ieee80211_frame *wh;
+	struct ieee80211_node *ni;
+	struct ieee80211_rxinfo rxi;
+	struct mbuf *m;
+	size_t flen;
+
+	if (len < sizeof(*ind) || ic->ic_state != IEEE80211_S_SCAN)
+		return;
+	flen = le16toh(ind->length);
+	if (flen < sizeof(struct ieee80211_frame) + 12
+		|| flen > len - sizeof(*ind) || flen > MCLBYTES)
+		return;
+
+	m = aic_newbuf();
+	if (m == NULL)
+		return;
+	memcpy(mtod(m, uint8_t *), ind->payload, flen);
+	m->m_pkthdr.len = m->m_len = flen;
+	wh = mtod(m, struct ieee80211_frame *);
+
+	ni = ieee80211_find_rxnode(ic, wh);
+	memset(&rxi, 0, sizeof(rxi));
+	rxi.rxi_rssi = ind->rssi;
+	rxi.rxi_chan = ieee80211_mhz2ieee(le16toh(ind->center_freq), 0);
+	ieee80211_input(ifp, m, ni, &rxi);
+	ieee80211_release_node(ic, ni);
+	sc->sc_scan_results++;
+}
+
+
+static void
+aic_scan_done(struct aic_softc *sc, const uint8_t *data, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct scanu_start_cfm *cfm = (const void *)data;
+
+	sc->sc_scanning = 0;
+	if (sc->sc_scans <= 4)
+		printf("%s: scan done, status %u, %d results (firmware %u)\n",
+			AIC_NAME, len >= sizeof(*cfm) ? cfm->status : 0xff,
+			sc->sc_scan_results, len >= sizeof(*cfm) ? cfm->result_cnt : 0);
+	if (ic->ic_state == IEEE80211_S_SCAN)
+		ieee80211_end_scan(&ic->ic_if);
+}
+
+
+/* firmware indications, outside the SDIO lock, with Giant (task context) */
+static void
+aic_ind_task(void *arg)
+{
+	struct aic_softc *sc = arg;
+	struct aic_ind *ind;
+
+	for (;;) {
+		mtx_enter(&sc->sc_indq_mtx);
+		ind = TAILQ_FIRST(&sc->sc_indq);
+		if (ind != NULL) {
+			TAILQ_REMOVE(&sc->sc_indq, ind, link);
+			sc->sc_indq_len--;
+		}
+		mtx_leave(&sc->sc_indq_mtx);
+		if (ind == NULL)
+			break;
+
+		switch (ind->id) {
+		case SCANU_RESULT_IND:
+			aic_scan_result(sc, ind->data, ind->len);
+			break;
+		case SCANU_START_CFM:
+			aic_scan_done(sc, ind->data, ind->len);
+			break;
+		default:
+			if (sc->sc_unsolicited_logged < 16) {
+				sc->sc_unsolicited_logged++;
+				printf("%s: firmware indication 0x%04x (task %u, index "
+					"%u), %u bytes\n", AIC_NAME, ind->id, MSG_T(ind->id),
+					MSG_I(ind->id), ind->len);
+			}
+			break;
+		}
+		free(ind, M_DEVBUF, sizeof(*ind) + ind->len);
+	}
+}
 
 
 static int
 aic_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct aic_softc *sc = ic->ic_softc;
+	struct ifnet *ifp = &ic->ic_if;
 
-	if (nstate == IEEE80211_S_SCAN) {
-		/* TODO milestone 2: SCANU_START_REQ */
-		printf("%s: scanning is not implemented yet\n", AIC_NAME);
+	switch (nstate) {
+	case IEEE80211_S_SCAN:
+		if (aic_vif_up(sc) != 0 || aic_scan(sc) != 0) {
+			printf("%s: cannot start a scan\n", AIC_NAME);
+			return 0;
+		}
+		if (ic->ic_state == IEEE80211_S_SCAN)
+			return 0;
+		ieee80211_set_link_state(ic, LINK_STATE_DOWN);
+		ieee80211_free_allnodes(ic, 1);
 		ic->ic_state = nstate;
 		return 0;
+	case IEEE80211_S_AUTH:
+	case IEEE80211_S_ASSOC:
+	case IEEE80211_S_RUN:
+		/* TODO milestone 3: SM_CONNECT_REQ */
+		if (sc->sc_scans <= 4)
+			printf("%s: joining is not implemented yet\n", AIC_NAME);
+		return 0;
+	default:
+		break;
 	}
+	(void)ifp;
 	return sc->sc_newstate(ic, nstate, arg);
 }
 
@@ -853,10 +1356,33 @@ aic_start(struct ifnet *ifp)
 }
 
 
+static void
+aic_init(struct ifnet *ifp)
+{
+	struct aic_softc *sc = ifp->if_softc;
+
+	if (aic_vif_up(sc) != 0) {
+		printf("%s: cannot bring the station interface up\n", AIC_NAME);
+		return;
+	}
+	ifp->if_flags |= IFF_RUNNING;
+	ieee80211_begin_scan(ifp);
+}
+
+
+static void
+aic_stop(struct ifnet *ifp)
+{
+	struct aic_softc *sc = ifp->if_softc;
+
+	ifp->if_flags &= ~IFF_RUNNING;
+	ieee80211_new_state(&sc->sc_ic, IEEE80211_S_INIT, -1);
+}
+
+
 static int
 aic_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 {
-	struct aic_softc *sc = ifp->if_softc;
 	int error = 0;
 
 	switch (cmd) {
@@ -864,10 +1390,13 @@ aic_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		ifp->if_flags |= IFF_UP;
 		/* FALLTHROUGH */
 	case SIOCSIFFLAGS:
-		if (ifp->if_flags & IFF_UP)
-			ifp->if_flags |= IFF_RUNNING;
-		else
-			ifp->if_flags &= ~IFF_RUNNING;
+		if (ifp->if_flags & IFF_UP) {
+			if (!(ifp->if_flags & IFF_RUNNING))
+				aic_init(ifp);
+		} else {
+			if (ifp->if_flags & IFF_RUNNING)
+				aic_stop(ifp);
+		}
 		break;
 	case SIOCADDMULTI:
 	case SIOCDELMULTI:
@@ -875,9 +1404,14 @@ aic_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 	default:
 		error = ieee80211_ioctl(ifp, cmd, data);
 	}
-	if (error == ENETRESET)
+	if (error == ENETRESET) {
+		if ((ifp->if_flags & (IFF_UP | IFF_RUNNING))
+				== (IFF_UP | IFF_RUNNING)) {
+			aic_stop(ifp);
+			aic_init(ifp);
+		}
 		error = 0;
-	(void)sc;
+	}
 	return error;
 }
 
@@ -895,13 +1429,15 @@ aic_net_attach(struct aic_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ifnet *ifp = &ic->ic_if;
+	unsigned i;
 	int chan;
 
 	ic->ic_softc = sc;
 	ic->ic_phytype = IEEE80211_T_OFDM;
 	ic->ic_opmode = IEEE80211_M_STA;
 	ic->ic_state = IEEE80211_S_INIT;
-	ic->ic_caps = IEEE80211_C_WEP | IEEE80211_C_RSN | IEEE80211_C_SCANALL;
+	ic->ic_caps = IEEE80211_C_WEP | IEEE80211_C_RSN | IEEE80211_C_SCANALL
+		| IEEE80211_C_SCANALLBAND;
 
 	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
 	ic->ic_sup_rates[IEEE80211_MODE_11G] = ieee80211_std_rateset_11g;
@@ -911,6 +1447,15 @@ aic_net_attach(struct aic_softc *sc)
 		ic->ic_channels[chan].ic_flags = IEEE80211_CHAN_CCK
 			| IEEE80211_CHAN_OFDM | IEEE80211_CHAN_DYN
 			| IEEE80211_CHAN_2GHZ;
+	}
+	if (sc->sc_5g) {
+		ic->ic_sup_rates[IEEE80211_MODE_11A] = ieee80211_std_rateset_11a;
+		for (i = 0; i < nitems(aic_5ghz_channels); i++) {
+			chan = aic_5ghz_channels[i];
+			ic->ic_channels[chan].ic_freq =
+				ieee80211_ieee2mhz(chan, IEEE80211_CHAN_5GHZ);
+			ic->ic_channels[chan].ic_flags = IEEE80211_CHAN_A;
+		}
 	}
 	ic->ic_ibss_chan = &ic->ic_channels[1];
 
@@ -961,6 +1506,9 @@ aic_sdio_attach(device_t dev)
 	int error;
 
 	sc->sc_dev = dev;
+	TAILQ_INIT(&sc->sc_indq);
+	mtx_init(&sc->sc_indq_mtx, IPL_NET);
+	task_set(&sc->sc_ind_task, aic_ind_task, sc);
 
 	if (sdmmc_haiku_attach(&sc->sc_sdmmc, hdev) != 0) {
 		printf("%s: cannot set up the SDIO card\n", AIC_NAME);
@@ -993,8 +1541,17 @@ aic_sdio_attach(device_t dev)
 
 	if_alloc_inplace(ifp, IFT_ETHER);
 	aic_net_attach(sc);
-	printf("%s: attached (scan and join come in the next milestones)\n",
-		AIC_NAME);
+
+	/* from here on replies and indications come by card interrupt */
+	sc->sc_ih = sdmmc_intr_establish(&sc->sc_sdmmc, aic_intr, sc, AIC_NAME);
+	if (sc->sc_ih != NULL) {
+		rw_enter_write(&sc->sc_sdmmc.sc_lock);
+		sdmmc_intr_enable(sc->sc_sf);
+		rw_exit(&sc->sc_sdmmc.sc_lock);
+	}
+	printf("%s: attached, card interrupt %s (joining comes in milestone 3)\n",
+		AIC_NAME, (sc->sc_sdmmc.sc_intr_enabled & 2) != 0 ? "on"
+			: "NOT available, scan results will not arrive");
 	return 0;
 
 fail:
@@ -1012,6 +1569,8 @@ aic_sdio_detach(device_t dev)
 	struct aic_softc *sc = device_get_softc(dev);
 	struct ifnet *ifp = &sc->sc_ic.ic_if;
 
+	/* sdmmc_haiku_detach() below also removes the card interrupt */
+	sc->sc_ih = NULL;
 	if (sc->sc_fw_up) {
 		ieee80211_ifdetach(ifp);
 		if_detach(ifp);

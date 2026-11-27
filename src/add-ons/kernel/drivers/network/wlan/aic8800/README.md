@@ -5,9 +5,10 @@ module = AIC8800D80 (SDIO ids 0xc8a1:0x0082), on JH7110 sdio1
 (dw_mmc @0x16020000, 4-bit, WL_REG_ON = GPIO33). Licence: GPL-2.0 (port of
 the Linux aic8800 driver, see THIRD_PARTY.md).
 
-Status (2026-11-26): **milestone 1 ("fw up") in hardware test** (chip revisions U02 = 3 and U03/U04 = 7;
-the VF2 Lite has 7). Scan (milestone 2) and WPA2 join (milestone 3) are not
-written yet.
+Status (2026-11-26): milestone 1 ("fw up") **confirmed** on the VF2 Lite
+(chip revisions U02 = 3 and U03/U04 = 7; the Lite has 7). Milestone 2
+(scan) written, **pending** hardware test (vf2lite-15). WPA2 join
+(milestone 3) is not written yet.
 
 ## Firmware (not shipped)
 
@@ -46,9 +47,34 @@ Bring-up, as the Linux BSP does it for the D80:
 7. DBG_START_APP 0x120000, HOST_START_APP_AUTO.
 8. MM_GET_MAC_ADDR, MM_RESET, MM_VERSION.
 
-Milestone 1 polls fn1 0x04 instead of using the SDIO card interrupt. If the
-boot ROM does not answer at all, it also sets CCCR 0x04 = 0x07 (what Linux
-does for `need_func0_intr`) and retries once.
+Bring-up polls fn1 0x04 (no interrupt handler yet). If the boot ROM does
+not answer at all, it also sets CCCR 0x04 = 0x07 (what Linux does for
+`need_func0_intr`) and retries once.
 
-Log lines all start with `aic8800:`; `firmware up: lmac ...` is the
-milestone 1 success line.
+After `firmware up`, as `rwnx_platform_init` / `rwnx_open` do:
+
+9. MM_SET_STACK_START (is_stack_start 1, vendor info BIT(5)); the reply
+   says whether 5 GHz is supported.
+10. RF init: MM_SET_TXPWR_IDX_LVL (txpwr_lvl_v3, the Linux driver's
+    built-in userconfig defaults; the adj and ofst2x tables are off by
+    default there, so they are not sent), then MM_SET_RF_CALIB
+    (cal_cfg 0x0f8f/0x0f0f, alpha 0x0c34c008, BT calib off, xtal cap 0).
+11. ME_CONFIG (HT MCS 0-7, 20/40 MHz, SGI, LDPC, STBC; VHT/HE off; power
+    save off) and ME_CHAN_CONFIG (2.4 GHz 1-13; non-DFS 5 GHz 36-48,
+    149-165 if supported; 20 dBm).
+12. Card interrupt installed (sdmmc_intr_establish/enable): the handler
+    drains the chip under the SDIO lock. Synchronous commands still poll
+    under the same lock, so both paths are safe.
+13. Interface up: MM_START (phy_cfg 0, uapsd 300, lp clock 20 ppm), then
+    MM_ADD_IF (station); the reply gives the vif index.
+14. net80211 SCAN state: SCANU_START_REQ (all channels, one wildcard SSID,
+    or the wanted one, broadcast BSSID), answered by
+    SCANU_START_CFM_ADDTIONAL. Each SCANU_RESULT_IND carries a whole
+    beacon/probe response, given to `ieee80211_input` as is (like bwfm's
+    scan path). SCANU_START_CFM (as an indication) ends the scan:
+    `ieee80211_end_scan`. Indications are queued from the RX path to a task,
+    because net80211 may send commands back.
+
+Log lines all start with `aic8800:`. `firmware up: lmac ...` is the
+milestone 1 success line; `scan done, status 0, N results` the milestone 2
+one. Network names and addresses are never logged.

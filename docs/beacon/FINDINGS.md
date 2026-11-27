@@ -767,3 +767,23 @@ log shows why the card went quiet and how it came back.
   the chip's efuse (xx:xx).
 - /dev/net/aic8800/0 appears, net_server starts it, and Network prefs shows the Wi-Fi interface.
   Link stays down because scanning is not written yet (milestone 2).
+
+## AIC8800D80 driver (aic8800), milestone 2 "scan" (pending, vf2lite-15)
+
+File: src/add-ons/kernel/drivers/network/wlan/aic8800/if_aic_sdio.c (README has the full order).
+- After firmware up the LMAC needs more set-up before it scans, in the order of Linux
+  rwnx_platform_init / rwnx_open: MM_SET_STACK_START (its reply carries the 5 GHz flag), the RF init
+  (MM_SET_TXPWR_IDX_LVL with the driver's built-in userconfig table, then MM_SET_RF_CALIB with the
+  D80 calibration words), ME_CONFIG, ME_CHAN_CONFIG, and on interface up MM_START then MM_ADD_IF
+  (station). Without a vif from MM_ADD_IF, SCANU_START has no interface to scan on.
+- SCANU_START_REQ is acknowledged by SCANU_START_CFM_ADDTIONAL (sic). The real end of the scan is a
+  later SCANU_START_CFM that arrives as an indication, after one SCANU_RESULT_IND per beacon or
+  probe response. Each result carries the whole 802.11 frame, so it can go straight into net80211's
+  ieee80211_input (no fake beacon as bwfm builds).
+- Indications are read in the SDIO RX path, which holds the SDIO lock. net80211 can answer them
+  with a command (end of scan, then a rescan), which needs that lock too. So indications are copied
+  onto a queue and handled in a task (Giant, no SDIO lock).
+- RX now comes by SDIO card interrupt (sdmmc_intr_establish/enable; the bus sets CCCR IEN). The
+  chip-side enable is fn1 0x00 = 0x07, which bring-up already writes. Synchronous commands still
+  poll under the same lock, so a reply is never lost between the two paths.
+- Network names and addresses are not logged; the success line is "scan done, status 0, N results".
