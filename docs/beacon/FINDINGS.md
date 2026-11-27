@@ -690,6 +690,9 @@ Patch: ~/beacon/firefox/ff160/notes/beacon-firefox-160.0.1-riscv64.patch (MPL-2.
   clear_caches(addr, len, B_INVALIDATE_ICACHE | B_FLUSH_DCACHE); Beacon's kernel turns that into
   fence.i locally plus an SBI remote fence.i on the other harts.
 - Also: navigator.platform/oscpu said "Haiku x86_64" regardless of CPU; now reports riscv64.
+- **wasm signal handlers:** js/src/wasm/WasmSignalHandlers.cpp had no Haiku riscv64 context macros.
+  Beacon's riscv64 signal frame: pc = uc_mcontext.pc, vregs x[0..30] hold x1..x31, so ra = x[0],
+  sp = x[1], fp(s0) = x[7]. Checked against the kernel's arch_thread.cpp signal frame (pending, untested).
 - Toolchain note: Debian's clang 19 + lld 19 handle --target=riscv64-unknown-haiku with the
   Haiku sysroot; HaikuPorts' lld >= 21 requirement is not enforced by configure (libxul link
   with lld 19 still unproven).
@@ -835,3 +838,15 @@ before a key is installed, so message 4 leaves unencrypted.
   can follow SM_CONNECT_IND in the same FIFO read, is handled after the state reaches RUN.
 - TX: struct hostdesc (28 bytes) after a 4-byte SDIO data header (type 0x01, CRC-8 on the D80), then
   the frame without its Ethernet header (Linux rwnx_start_xmit + aicwf_sdio_aggr).
+
+## NSPR cross-build silently drops its Haiku code (confirmed on the board)
+
+Cross-configuring NSPR 4.39 for riscv64-unknown-haiku sets OS_ARCH from the target triple in
+lowercase ("haiku"), but HaikuPorts' Makefiles test `ifeq ($(OS_ARCH),Haiku)`. Result: prhaiku.cpp
+(the BTimeZone wrapper) and -lbe are left out, and libnspr4.so fails to load with "Could not resolve
+symbol '_PR_Haiku_GetLocalTimeOffset'". Fix: map `haiku*) OS_ARCH=Haiku ;;` in configure(.in).
+NSS is not affected when built with OS_ARCH=Haiku OS_TARGET=Haiku. Found 2026-11-26 by the Firefox
+library test on an Orange Pi RV; after the fix 15/16 checks pass (ffi, libevent, fontconfig/FreeType,
+HarfBuzz, cairo/pixman, VP9, NSS, dlopen). The VP8 failure was a test bug (packets must be drained
+after every vpx_codec_encode call; VP8 has no lag). With the bundled fonts.conf, bundle_v3 passes
+16/16 on the RV, and sans-serif resolves to Noto Sans with HarfBuzz ligatures (17 glyphs for 19 chars).
