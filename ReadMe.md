@@ -16,21 +16,21 @@ trademarks of RISC-V International; Beacon is not affiliated with them.
 
 Development is AI-assisted.
 
-## 🎉 BEACON NOW RUNS ON THREE RISC-V BOARDS! 🎉
+## 🎉 BEACON 0.5: ONE IMAGE, THREE BOARDS, AND WI-FI ON THE VISIONFIVE 2 LITE! 🎉
 
 # ✅ Orange Pi RV  ✅ VisionFive 2  ✅ VisionFive 2 Lite
 
-**November 26, 2026:** Beacon boots to the desktop on the **StarFive
-VisionFive 2** and the **VisionFive 2 Lite**, as well as the **Orange Pi RV**.
-**One SD card image** boots both StarFive boards and starts on its own, with
-no changes to the boards' firmware. The VF2 Lite's on-chip USB controller got a
-new Beacon driver the same day.
+**[Beacon 0.5](https://github.com/spacemonkeyboom/Beacon-OS/releases/tag/v0.5)
+(November 26, 2026):** one SD card image boots the **VisionFive 2 Lite**, the
+**VisionFive 2** and the **Orange Pi RV**, with no changes to the boards'
+firmware. The **Lite's built-in Wi-Fi works**, with a new Beacon driver for its
+AICSemi AIC8800D80 chip, written and brought up in a single day.
 
 | Board | Status |
 |---|---|
+| VisionFive 2 Lite (JH7110S) | Desktop, built-in Wi-Fi (WPA2), USB keyboard and mouse, HDMI audio, WebPositive |
+| VisionFive 2 (JH7110) | Desktop, USB keyboard and mouse, HDMI audio |
 | Orange Pi RV (JH7110) | Desktop, USB, Wi-Fi, audio, WebPositive |
-| VisionFive 2 (JH7110) | Desktop, USB keyboard and mouse |
-| VisionFive 2 Lite (JH7110S) | Desktop, USB keyboard and mouse (new Cadence USB 3 driver) |
 
 What it took: a boot partition the StarFive firmware finds by itself,
 keeping the firmware's own memory out of the kernel's hands (the Lite's
@@ -162,9 +162,10 @@ Known issues:
 
    Use the card's `/dev/disk/by-id/...` name (`ls /dev/disk/by-id/ | grep mmc`)
    so you cannot write to the wrong disk. This erases the card.
-3. Put the card in the Orange Pi RV, connect HDMI, a USB keyboard and mouse,
-   and power on. The board's own U-Boot (in SPI flash) starts Beacon; nothing
-   on the board is changed.
+3. Put the card in your board (VisionFive 2 Lite, VisionFive 2 or Orange Pi RV),
+   connect HDMI, a USB keyboard and mouse, and power on. The board's own U-Boot
+   (in SPI flash) starts Beacon; nothing on the board is changed. On the
+   **VisionFive 2**, set both boot switches to **L** (QSPI) first.
 
 A USB serial adapter on the debug UART (115200 baud) shows the full boot log.
 Please attach it to bug reports.
