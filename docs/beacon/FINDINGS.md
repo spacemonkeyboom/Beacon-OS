@@ -868,7 +868,7 @@ takes them from BEACON_AIC8800_FIRMWARE_DIR and skips the package without it. Bo
 Files: build/jam/packages/Aic8800Firmware, src/data/package_infos/any/aic8800_firmware,
 data/beacon/aic8800_firmware/.
 
-### package_daemon double free on first boot — fix pending hardware test
+### package_daemon double free on first boot — fixed (unified-03, Orange Pi RV)
 Every board's first boot showed a debug_server dialog: `double free` in package_daemon, stack
 `free <- ~VolumeState <- ~CommitTransactionHandler <- Volume::_CommitTransaction <- Root::_JobRunner`
 (also in older rv53/rv57 logs; not riscv-specific). Cause, in upstream code: the first-boot
@@ -882,3 +882,14 @@ The "Failed to get activated packages info" lines are normal on a fresh image (n
 file yet). QEMU note: Debian's EDK2 (`qemu-efi-riscv64`) with `-M virt,acpi=off` boots the loader
 into the kernel, but the kernel is silent on QEMU's serial; U-Boot 2025.10 S-mode crashed in the loader.
 Files: src/servers/package/CommitTransactionHandler.cpp, Volume.cpp.
+
+### First boot processing stopped at HaikuPorts' less — fix pending hardware test
+With the double free gone (unified-03 on the RV: no dialog), the new logging showed the real failure:
+`less-451-1` declares included global writable files `settings/etc/sysless` and `sysless.src` but ships
+no `settings/` at all, so opening the extracted source directory failed (ENOENT) and the exception ended
+first boot processing. Every package after less in the (hash-ordered) list got no users, groups,
+settings or writable files and no post-install scripts. The order differs per image, so which packages
+lost out varied (on the RV, openssh came before less). Fix: skip a declared writable file the package
+does not contain (warning), and in first boot mode log a failing package and continue with the rest
+("First boot processing: N of M packages failed."). A scan of all downloaded .hpkg files found less to be
+the only package with this defect. File: src/servers/package/CommitTransactionHandler.cpp.
