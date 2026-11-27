@@ -675,6 +675,18 @@ DwMmcHost::_HandleInterrupt()
 		_Write(kDwRintsts, raw);
 	}
 
+	// Beacon: a raw SDIO card interrupt bit (16) while nobody uses the host
+	// SDIO interrupt. It latches during 1-bit enumeration (DAT1 doubles as
+	// the interrupt line; seen RINTSTS 0x10004 right after the failed 1-bit
+	// CMD53 check on the VF2 Lite) and is never acked otherwise, and on the
+	// JH7110 a masked raw bit still holds the line up: unclaimed interrupts
+	// until the kernel disables the vector. Ack it here.
+	if (!fSdioIrqEnabled && (_Read(kDwRintsts) & kDwIntSdio) != 0) {
+		_Write(kDwRintsts, kDwIntSdio);
+		if (pending == 0 && idsts == 0 && raw == 0)
+			return B_HANDLED_INTERRUPT;
+	}
+
 	if (pending == 0) {
 		if (idsts != 0 || raw != 0) {
 			if (raw != 0) {

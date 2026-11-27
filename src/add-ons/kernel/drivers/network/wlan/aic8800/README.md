@@ -5,10 +5,10 @@ module = AIC8800D80 (SDIO ids 0xc8a1:0x0082), on JH7110 sdio1
 (dw_mmc @0x16020000, 4-bit, WL_REG_ON = GPIO33). Licence: GPL-2.0 (port of
 the Linux aic8800 driver, see THIRD_PARTY.md).
 
-Status (2026-11-26): milestone 1 ("fw up") **confirmed** on the VF2 Lite
-(chip revisions U02 = 3 and U03/U04 = 7; the Lite has 7). Milestone 2
-(scan) written, **pending** hardware test (vf2lite-15). WPA2 join
-(milestone 3) is not written yet.
+Status (2026-11-26): milestone 1 ("fw up") and milestone 2 (scan)
+**confirmed** on the VF2 Lite (chip revisions U02 = 3 and U03/U04 = 7; the
+Lite has 7). Milestone 3 (join, open and WPA2-PSK, data) written,
+**pending** hardware test (vf2lite-16).
 
 ## Firmware (not shipped)
 
@@ -62,9 +62,11 @@ After `firmware up`, as `rwnx_platform_init` / `rwnx_open` do:
 11. ME_CONFIG (HT MCS 0-7, 20/40 MHz, SGI, LDPC, STBC; VHT/HE off; power
     save off) and ME_CHAN_CONFIG (2.4 GHz 1-13; non-DFS 5 GHz 36-48,
     149-165 if supported; 20 dBm).
-12. Card interrupt installed (sdmmc_intr_establish/enable): the handler
-    drains the chip under the SDIO lock. Synchronous commands still poll
-    under the same lock, so both paths are safe.
+12. RX by polling: a thread reads fn1 0x04 every 10 ms when idle, halving
+    the period (to 1 ms) while frames arrive, like Linux's sdio_irq_thread
+    without MMC_CAP_SDIO_IRQ. The JH7110 dw_mmc's SDIO card interrupt is
+    not usable (StarFive's own DTs leave `cap-sdio-irq` out); see
+    FINDINGS.md. Synchronous commands poll under the same SDIO lock.
 13. Interface up: MM_START (phy_cfg 0, uapsd 300, lp clock 20 ppm), then
     MM_ADD_IF (station); the reply gives the vif index.
 14. net80211 SCAN state: SCANU_START_REQ (all channels, one wildcard SSID,
@@ -75,6 +77,33 @@ After `firmware up`, as `rwnx_platform_init` / `rwnx_open` do:
     `ieee80211_end_scan`. Indications are queued from the RX path to a task,
     because net80211 may send commands back.
 
+    MM_CHANNEL_SURVEY_IND (one per scanned channel: busy time, noise) is
+    ignored. The firmware's result count is networks; we see one result
+    per frame (beacon and probe response), so both are logged.
+15. Join: net80211 picks the network; in AUTH state the driver sends
+    SM_CONNECT_REQ (SSID, BSSID, channel, our RSN/WPA IE, for WPA
+    `CONTROL_PORT_HOST | WPA_WPA2_IN_USE`, control port ethertype 0x888e).
+    The firmware authenticates and associates and answers SM_CONNECT_IND
+    (status, the AP's station index); net80211 goes ASSOC -> RUN.
+16. WPA2-PSK: net80211 runs the 4-way handshake itself, like bwfm (the PSK
+    comes from Network prefs through Haiku's HAIKU_JOIN ioctl). Keys go to
+    the firmware with MM_KEY_ADD (pairwise: AP station index; group: 0xff
+    and the key id); after the pairwise key, ME_SET_CONTROL_PORT opens the
+    port. Queued frames (message 4) are sent before the key goes in.
+17. Data TX: 4-byte SDIO header (type 0x01, CRC-8), struct hostdesc
+    (length, destination, source, ethertype, AC BE, TID 0, vif, station),
+    the frame without its Ethernet header; one frame per write, only with
+    more than 2 free firmware buffers.
+18. Data RX: 60-byte hardware header (struct hw_rxhdr + 4 alignment bytes)
+    and the decrypted 802.11 MPDU (security header still in it). Converted
+    to Ethernet as Linux does (A-MSDUs split); EAPOL to net80211, the rest
+    to the stack. Management frames (is_80211_mpdu) are dropped: the
+    firmware handles them.
+19. Leaving RUN or a join: SM_DISCONNECT_REQ. SM_DISCONNECT_IND from the
+    firmware starts a new scan. A scan or connect that never finishes (a
+    reply lost to a bus error) is restarted after 15 s.
+
 Log lines all start with `aic8800:`. `firmware up: lmac ...` is the
-milestone 1 success line; `scan done, status 0, N results` the milestone 2
-one. Network names and addresses are never logged.
+milestone 1 success line; `scan done, status 0, ...` the milestone 2 one;
+`associated`, then for WPA `pairwise key installed`, the milestone 3 ones.
+Network names, addresses and keys are never logged.

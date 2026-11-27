@@ -19,6 +19,13 @@
  *   rwnx_platform.c                RF init order and the built-in userconfig
  *                                  TX power defaults (txpwr_lvl_v3 gp[0])
  *   aic8800_fdrv/rwnx_msg_rx.c     SCANU_RESULT_IND / SCANU_START_CFM
+ *   aic8800_fdrv/rwnx_msg_tx.c, rwnx_msg_rx.c (cont.)
+ *                                  SM_CONNECT, SM_DISCONNECT, MM_KEY_ADD/DEL,
+ *                                  ME_SET_CONTROL_PORT
+ *   aic8800_fdrv/rwnx_tx.c, aicwf_sdio.c, ipc_shared.h
+ *                                  data TX (struct hostdesc, SDIO data header)
+ *   aic8800_fdrv/rwnx_rx.c, rwnx_rx.h, aicwf_txrxif.c
+ *                                  data RX (struct hw_rxhdr, 802.11 to 802.3)
  *   aic8800_fdrv/rwnx_main.c, rwnx_mod_params.c
  *                                  open order, module parameter defaults
  *
@@ -33,8 +40,10 @@
  *
  * Milestone 1 ("fw up"): upload and start the firmware, read the MAC address
  * and firmware version. Milestone 2 (scan): RF init, ME config, a station
- * interface, SCANU_START, scan results into net80211, card interrupt for RX.
- * Joining (milestone 3) is not implemented yet.
+ * interface, SCANU_START, scan results into net80211. Milestone 3 (join):
+ * SM_CONNECT (the firmware does auth/assoc), the WPA handshake in net80211
+ * (as with bwfm), keys into the firmware, data TX/RX. RX is polled by a
+ * thread: the JH7110 host has no usable SDIO card interrupt.
  */
 
 #include <sys/param.h>
@@ -157,7 +166,25 @@ struct aic_softc {
 	int						 sc_scanning;	/* SCANU_START sent, no CFM yet */
 	int						 sc_scan_results;
 	int						 sc_scans;
-	void					*sc_ih;
+#define AIC_SCAN_BSS_MAX		64
+	uint8_t					 sc_scan_bss[AIC_SCAN_BSS_MAX][ETHER_ADDR_LEN];
+	int						 sc_scan_bss_count;
+	struct timeout			 sc_watchdog_to;
+
+	/* RX poller thread (no usable card interrupt on the JH7110) */
+	thread_id				 sc_poll_thread;
+	volatile int			 sc_poll_quit;
+
+	/* milestone 3: join */
+	int						 sc_connecting;	/* SM_CONNECT sent, no IND yet */
+	int						 sc_connected;
+	uint8_t					 sc_ap_idx;		/* firmware station index */
+	int						 sc_port_open;
+#define AIC_NO_KEY				0xff
+	uint8_t					 sc_pairwise_hw;
+	uint8_t					 sc_group_hw[4];
+	int						 sc_eapol_logged;
+	int						 sc_rx_mgmt;
 
 	/* firmware indications, handed from the RX path to a task */
 	TAILQ_HEAD(, aic_ind)	 sc_indq;
@@ -174,8 +201,14 @@ struct aic_ind {
 };
 
 #define AIC_INDQ_MAX			256
+#define AIC_IND_DATA			0xffff	/* an RX data frame, not a message */
+#define AIC_IND_WATCHDOG		0xfffe
+#define AIC_SCAN_TIMEOUT_S		15
+#define AIC_CONNECT_TIMEOUT_S	15
 
 static void aic_ind_task(void *);
+static void aic_start(struct ifnet *);
+static void aic_watchdog(void *);
 
 
 #define SDIO_OPS(sc)	((sc)->sc_sdmmc.sc_sdio)
@@ -475,6 +508,28 @@ aic_rx_msg(struct aic_softc *sc, const uint8_t *msg, size_t avail)
 }
 
 
+/* copy one RX data frame (hardware header + MPDU) for aic_ind_task() */
+static void
+aic_queue_data(struct aic_softc *sc, const uint8_t *p, size_t len)
+{
+	struct aic_ind *ind;
+
+	if (len > 0xffff || sc->sc_indq_len >= AIC_INDQ_MAX)
+		return;
+	ind = malloc(sizeof(*ind) + len, M_DEVBUF, M_NOWAIT);
+	if (ind == NULL)
+		return;
+	ind->id = AIC_IND_DATA;
+	ind->len = len;
+	memcpy(ind->data, p, len);
+	mtx_enter(&sc->sc_indq_mtx);
+	TAILQ_INSERT_TAIL(&sc->sc_indq, ind, link);
+	sc->sc_indq_len++;
+	mtx_leave(&sc->sc_indq_mtx);
+	task_add(systq, &sc->sc_ind_task);
+}
+
+
 /*
  * aicwf_sdio_hal_irqhandler() (non-func2 path) + aicwf_sdio_readframes() +
  * aicwf_process_rxframes(). Returns 1 when something was read, 0 when the
@@ -536,6 +591,10 @@ aic_rx_poll(struct aic_softc *sc)
 			/* data frame: hardware header + 802.11 frame */
 			adjust = roundup((size_t)pkt_len + AIC_RX_HWHDR_LEN, 4);
 			sc->sc_data_frames++;
+			if (p + pkt_len + AIC_RX_HWHDR_LEN > end)
+				break;
+			if (sc->sc_connecting || sc->sc_connected)
+				aic_queue_data(sc, p, pkt_len + AIC_RX_HWHDR_LEN);
 			p += adjust;
 		} else {
 			adjust = roundup((size_t)pkt_len, 4);
@@ -1059,31 +1118,48 @@ aic_fw_init(struct aic_softc *sc)
 }
 
 
-/* #pragma mark - card interrupt */
+/* #pragma mark - RX poller */
 
 
 /*
- * SDIO card interrupt (aicwf_sdio_hal_irqhandler). Called from the bus
- * manager's IRQ thread (through the shim, with Giant held), never with the
- * bus held. Drains the chip; indications are queued for aic_ind_task().
+ * The JH7110's dw_mmc cannot be used for the SDIO card interrupt (StarFive's
+ * own device trees leave cap-sdio-irq out, so their Linux polls too; see
+ * FINDINGS.md). Poll the chip's own status register instead, like Linux's
+ * sdio_irq_thread() without MMC_CAP_SDIO_IRQ: every 10 ms when idle, the
+ * period halved (down to 1 ms) while there is traffic.
  */
-static int
-aic_intr(void *arg)
+#define AIC_POLL_IDLE_US		10000
+#define AIC_POLL_MIN_US			1000
+
+static int32
+aic_poll_thread(void *arg)
 {
 	struct aic_softc *sc = arg;
-	int i;
+	bigtime_t period = AIC_POLL_IDLE_US;
 
-	rw_enter_write(&sc->sc_sdmmc.sc_lock);
-	for (i = 0; i < 32; i++) {
-		if (aic_rx_poll(sc) <= 0)
-			break;
+	while (!sc->sc_poll_quit) {
+		int i, got = 0, r;
+
+		rw_enter_write(&sc->sc_sdmmc.sc_lock);
+		for (i = 0; i < 32; i++) {
+			r = aic_rx_poll(sc);
+			if (r <= 0)
+				break;
+			got++;
+		}
+		rw_exit(&sc->sc_sdmmc.sc_lock);
+
+		if (got > 0)
+			period = MAX(period / 2, AIC_POLL_MIN_US);
+		else
+			period = MIN(period + 1000, AIC_POLL_IDLE_US);
+		snooze(period);
 	}
-	rw_exit(&sc->sc_sdmmc.sc_lock);
-	return 1;
+	return 0;
 }
 
 
-/* #pragma mark - net80211 (milestone 2: scan) */
+/* #pragma mark - net80211 */
 
 
 /* send one LMAC request from net80211 context (takes the SDIO lock) */
@@ -1099,6 +1175,32 @@ aic_cmd_locked(struct aic_softc *sc, uint16_t id, uint16_t dest,
 		AIC_CMD_TIMEOUT_MS);
 	rw_exit(&sc->sc_sdmmc.sc_lock);
 	return error;
+}
+
+
+/* queue a driver-internal event for aic_ind_task() */
+static void
+aic_post(struct aic_softc *sc, uint16_t id)
+{
+	struct aic_ind *ind = malloc(sizeof(*ind), M_DEVBUF, M_NOWAIT);
+
+	if (ind == NULL)
+		return;
+	ind->id = id;
+	ind->len = 0;
+	mtx_enter(&sc->sc_indq_mtx);
+	TAILQ_INSERT_TAIL(&sc->sc_indq, ind, link);
+	sc->sc_indq_len++;
+	mtx_leave(&sc->sc_indq_mtx);
+	task_add(systq, &sc->sc_ind_task);
+}
+
+
+/* scan or connect that never finished (a reply lost to a bus error) */
+static void
+aic_watchdog(void *arg)
+{
+	aic_post(arg, AIC_IND_WATCHDOG);
 }
 
 
@@ -1184,12 +1286,17 @@ aic_scan(struct aic_softc *sc)
 
 	sc->sc_scanning = 1;
 	sc->sc_scan_results = 0;
+	sc->sc_scan_bss_count = 0;
 	error = aic_cmd_locked(sc, SCANU_START_REQ, TASK_SCANU, req, sizeof(*req),
 		SCANU_START_CFM_ADDTIONAL, NULL, 0);
 	if (error != 0)
 		sc->sc_scanning = 0;
-	else if (sc->sc_scans++ < 4)
-		printf("%s: scan started on %u channels\n", AIC_NAME, req->chan_cnt);
+	else {
+		timeout_add_sec(&sc->sc_watchdog_to, AIC_SCAN_TIMEOUT_S);
+		if (sc->sc_scans++ < 4)
+			printf("%s: scan started on %u channels\n", AIC_NAME,
+				req->chan_cnt);
+	}
 	free(req, M_DEVBUF, sizeof(*req));
 	return error;
 }
@@ -1228,6 +1335,7 @@ aic_scan_result(struct aic_softc *sc, const uint8_t *data, size_t len)
 	struct ieee80211_rxinfo rxi;
 	struct mbuf *m;
 	size_t flen;
+	int i;
 
 	if (len < sizeof(*ind) || ic->ic_state != IEEE80211_S_SCAN)
 		return;
@@ -1242,6 +1350,16 @@ aic_scan_result(struct aic_softc *sc, const uint8_t *data, size_t len)
 	memcpy(mtod(m, uint8_t *), ind->payload, flen);
 	m->m_pkthdr.len = m->m_len = flen;
 	wh = mtod(m, struct ieee80211_frame *);
+
+	/* the firmware reports one result per frame (beacon and probe
+	 * response), but counts networks: count distinct BSSIDs too */
+	for (i = 0; i < sc->sc_scan_bss_count; i++) {
+		if (IEEE80211_ADDR_EQ(sc->sc_scan_bss[i], wh->i_addr3))
+			break;
+	}
+	if (i == sc->sc_scan_bss_count && i < AIC_SCAN_BSS_MAX)
+		IEEE80211_ADDR_COPY(sc->sc_scan_bss[sc->sc_scan_bss_count++],
+			wh->i_addr3);
 
 	ni = ieee80211_find_rxnode(ic, wh);
 	memset(&rxi, 0, sizeof(rxi));
@@ -1260,16 +1378,527 @@ aic_scan_done(struct aic_softc *sc, const uint8_t *data, size_t len)
 	const struct scanu_start_cfm *cfm = (const void *)data;
 
 	sc->sc_scanning = 0;
+	timeout_del(&sc->sc_watchdog_to);
 	if (sc->sc_scans <= 4)
-		printf("%s: scan done, status %u, %d results (firmware %u)\n",
-			AIC_NAME, len >= sizeof(*cfm) ? cfm->status : 0xff,
-			sc->sc_scan_results, len >= sizeof(*cfm) ? cfm->result_cnt : 0);
+		printf("%s: scan done, status %u, %d frames from %d networks "
+			"(firmware counts %u)\n", AIC_NAME,
+			len >= sizeof(*cfm) ? cfm->status : 0xff, sc->sc_scan_results,
+			sc->sc_scan_bss_count, len >= sizeof(*cfm) ? cfm->result_cnt : 0);
 	if (ic->ic_state == IEEE80211_S_SCAN)
 		ieee80211_end_scan(&ic->ic_if);
 }
 
 
-/* firmware indications, outside the SDIO lock, with Giant (task context) */
+/* #pragma mark - join (milestone 3) */
+
+
+/* rwnx_send_sm_connect_req(): the firmware does auth + assoc itself */
+static int
+aic_connect(struct aic_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	struct sm_connect_req *req;
+	struct sm_connect_cfm cfm;
+	uint8_t *frm;
+	int error;
+
+	req = malloc(sizeof(*req), M_DEVBUF, M_WAITOK | M_ZERO);
+	if (req == NULL)
+		return ENOMEM;
+
+	req->ssid.length = MIN(ni->ni_esslen, MAC_SSID_LEN);
+	memcpy(req->ssid.array, ni->ni_essid, req->ssid.length);
+	memcpy(req->bssid.array, ni->ni_bssid, ETHER_ADDR_LEN);
+	req->chan.freq = ni->ni_chan->ic_freq;
+	req->chan.band = IEEE80211_IS_CHAN_5GHZ(ni->ni_chan) ? 1 : 0;
+	req->chan.flags = 0;
+	req->chan.tx_power = AIC_CHAN_TX_POWER;
+	req->vif_idx = sc->sc_vif_idx;
+	req->auth_type = 0;				/* WLAN_AUTH_OPEN */
+	req->listen_interval = 0;		/* rwnx_mod_params listen_itv */
+	req->dont_wait_bcmc = false;	/* !listen_bcmc */
+	req->uapsd_queues = 0;			/* no power save here */
+	req->ctrl_port_ethertype = htons(ETHERTYPE_EAPOL);
+
+	if (ic->ic_flags & IEEE80211_F_RSNON) {
+		/* net80211 runs the 4-way handshake (like bwfm): the host owns
+		 * the control port, the firmware adds our RSN/WPA IE */
+		req->flags = CONTROL_PORT_HOST | WPA_WPA2_IN_USE;
+		if (ni->ni_rsncipher == IEEE80211_CIPHER_TKIP)
+			req->flags |= DISABLE_HT;
+		if (ni->ni_rsnprotos == IEEE80211_PROTO_RSN)
+			frm = ieee80211_add_rsn((uint8_t *)req->ie_buf, ic, ni);
+		else
+			frm = ieee80211_add_wpa((uint8_t *)req->ie_buf, ic, ni);
+		req->ie_len = frm - (uint8_t *)req->ie_buf;
+	}
+
+	memset(&cfm, 0, sizeof(cfm));
+	sc->sc_connecting = 1;
+	error = aic_cmd_locked(sc, SM_CONNECT_REQ, TASK_SM, req, sizeof(*req),
+		SM_CONNECT_CFM, &cfm, sizeof(cfm));
+	free(req, M_DEVBUF, sizeof(*req));
+	if (error == 0 && cfm.status != 0) {
+		printf("%s: firmware refused to connect (status %u)\n", AIC_NAME,
+			cfm.status);
+		error = EIO;
+	}
+	if (error != 0) {
+		sc->sc_connecting = 0;
+		return error;
+	}
+	timeout_add_sec(&sc->sc_watchdog_to, AIC_CONNECT_TIMEOUT_S);
+	printf("%s: connecting (%s, channel %u)\n", AIC_NAME,
+		(ic->ic_flags & IEEE80211_F_RSNON) ? "WPA" : "open",
+		ieee80211_chan2ieee(ic, ni->ni_chan));
+	return 0;
+}
+
+
+/* rwnx_send_sm_disconnect_req() */
+static void
+aic_disconnect(struct aic_softc *sc)
+{
+	struct sm_disconnect_req req;
+
+	if (!sc->sc_connected && !sc->sc_connecting)
+		return;
+	memset(&req, 0, sizeof(req));
+	req.reason_code = IEEE80211_REASON_AUTH_LEAVE;
+	req.vif_idx = sc->sc_vif_idx;
+	aic_cmd_locked(sc, SM_DISCONNECT_REQ, TASK_SM, &req, sizeof(req),
+		SM_DISCONNECT_CFM, NULL, 0);
+	sc->sc_connected = sc->sc_connecting = 0;
+	sc->sc_port_open = 0;
+	sc->sc_pairwise_hw = AIC_NO_KEY;
+	memset(sc->sc_group_hw, AIC_NO_KEY, sizeof(sc->sc_group_hw));
+}
+
+
+/* rwnx_rx_sm_connect_ind() */
+static void
+aic_connect_ind(struct aic_softc *sc, const uint8_t *data, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct sm_connect_ind *ind = (const void *)data;
+
+	if (len < offsetof(struct sm_connect_ind, assoc_ie_buf))
+		return;
+	sc->sc_connecting = 0;
+	timeout_del(&sc->sc_watchdog_to);
+	if (ic->ic_state != IEEE80211_S_AUTH)
+		return;
+	if (ind->status_code != 0) {
+		printf("%s: association failed (status %u)\n", AIC_NAME,
+			ind->status_code);
+		ic->ic_bss->ni_fails++;
+		ieee80211_begin_scan(&ic->ic_if);
+		return;
+	}
+	sc->sc_connected = 1;
+	sc->sc_ap_idx = ind->ap_idx;
+	printf("%s: associated (station %u, aid %u%s)\n", AIC_NAME,
+		ind->ap_idx, ind->aid & 0x3fff, ind->qos ? ", QoS" : "");
+	ieee80211_new_state(ic, IEEE80211_S_ASSOC, -1);
+	ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
+}
+
+
+static void
+aic_disconnect_ind(struct aic_softc *sc, const uint8_t *data, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct sm_disconnect_ind *ind = (const void *)data;
+
+	printf("%s: disconnected by the firmware (reason %u)\n", AIC_NAME,
+		len >= sizeof(*ind) ? ind->reason_code : 0);
+	sc->sc_connected = sc->sc_connecting = 0;
+	sc->sc_port_open = 0;
+	sc->sc_pairwise_hw = AIC_NO_KEY;
+	memset(sc->sc_group_hw, AIC_NO_KEY, sizeof(sc->sc_group_hw));
+	if (ic->ic_state > IEEE80211_S_SCAN)
+		ieee80211_begin_scan(&ic->ic_if);
+}
+
+
+static void
+aic_watchdog_fired(struct aic_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	if (sc->sc_scanning) {
+		printf("%s: scan did not finish, starting again\n", AIC_NAME);
+		sc->sc_scanning = 0;
+		if (ic->ic_state == IEEE80211_S_SCAN)
+			ieee80211_end_scan(&ic->ic_if);
+	} else if (sc->sc_connecting && ic->ic_state == IEEE80211_S_AUTH) {
+		printf("%s: no answer to the connect request, scanning again\n",
+			AIC_NAME);
+		aic_disconnect(sc);
+		ic->ic_bss->ni_fails++;
+		ieee80211_begin_scan(&ic->ic_if);
+	}
+}
+
+
+/* net80211 does no management frames itself: the firmware does them */
+static int
+aic_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni, int type,
+	int arg1, int arg2)
+{
+	return 0;
+}
+
+
+static int
+aic_cipher(u_int cipher)
+{
+	switch (cipher) {
+	case IEEE80211_CIPHER_WEP40:	return MAC_CIPHER_WEP40;
+	case IEEE80211_CIPHER_WEP104:	return MAC_CIPHER_WEP104;
+	case IEEE80211_CIPHER_TKIP:		return MAC_CIPHER_TKIP;
+	case IEEE80211_CIPHER_CCMP:		return MAC_CIPHER_CCMP;
+	default:						return -1;
+	}
+}
+
+
+/*
+ * rwnx_cfg80211_add_key() -> rwnx_send_key_add(); after the pairwise key,
+ * open the control port (what wpa_supplicant's "authorized" does on Linux,
+ * rwnx_send_me_set_control_port_req()).
+ */
+static int
+aic_set_key(struct ieee80211com *ic, struct ieee80211_node *ni,
+	struct ieee80211_key *k)
+{
+	struct aic_softc *sc = ic->ic_softc;
+	struct mm_key_add_req req;
+	struct mm_key_add_cfm cfm;
+	int pairwise = (k->k_flags & IEEE80211_KEY_GROUP) == 0;
+	int cipher = aic_cipher(k->k_cipher);
+	int error;
+
+	if (cipher < 0 || k->k_len > MAC_SEC_KEY_LEN || !sc->sc_connected) {
+		printf("%s: cannot install key (cipher %u)\n", AIC_NAME,
+			k->k_cipher);
+		return EINVAL;
+	}
+
+	/* the 4-way handshake's last message must leave unencrypted */
+	aic_start(&ic->ic_if);
+
+	memset(&req, 0, sizeof(req));
+	req.sta_idx = pairwise ? sc->sc_ap_idx : 0xff;
+	req.key_idx = pairwise ? 0 : k->k_id;
+	req.pairwise = pairwise;
+	req.inst_nbr = sc->sc_vif_idx;
+	req.key.length = k->k_len;
+	memcpy(req.key.array, k->k_key, k->k_len);
+	req.cipher_suite = cipher;
+	memset(&cfm, 0, sizeof(cfm));
+	error = aic_cmd_locked(sc, MM_KEY_ADD_REQ, TASK_MM, &req, sizeof(req),
+		MM_KEY_ADD_CFM, &cfm, sizeof(cfm));
+	explicit_bzero(&req, sizeof(req));
+	if (error == 0 && cfm.status != 0)
+		error = EIO;
+	if (error != 0) {
+		printf("%s: %s key install failed (%d)\n", AIC_NAME,
+			pairwise ? "pairwise" : "group", error);
+		return error;
+	}
+	if (pairwise)
+		sc->sc_pairwise_hw = cfm.hw_key_idx;
+	else if (k->k_id < nitems(sc->sc_group_hw))
+		sc->sc_group_hw[k->k_id] = cfm.hw_key_idx;
+	printf("%s: %s key installed\n", AIC_NAME, pairwise ? "pairwise" : "group");
+
+	if (pairwise && !sc->sc_port_open) {
+		struct me_set_control_port_req port;
+
+		memset(&port, 0, sizeof(port));
+		port.sta_idx = sc->sc_ap_idx;
+		port.control_port_open = true;
+		if (aic_cmd_locked(sc, ME_SET_CONTROL_PORT_REQ, TASK_ME, &port,
+				sizeof(port), ME_SET_CONTROL_PORT_CFM, NULL, 0) == 0)
+			sc->sc_port_open = 1;
+	}
+	return 0;
+}
+
+
+static void
+aic_delete_key(struct ieee80211com *ic, struct ieee80211_node *ni,
+	struct ieee80211_key *k)
+{
+	struct aic_softc *sc = ic->ic_softc;
+	struct mm_key_del_req req;
+	uint8_t *slot;
+
+	if ((k->k_flags & IEEE80211_KEY_GROUP) == 0)
+		slot = &sc->sc_pairwise_hw;
+	else if (k->k_id < nitems(sc->sc_group_hw))
+		slot = &sc->sc_group_hw[k->k_id];
+	else
+		return;
+	if (*slot == AIC_NO_KEY || !sc->sc_connected)
+		return;
+	memset(&req, 0, sizeof(req));
+	req.hw_key_idx = *slot;
+	*slot = AIC_NO_KEY;
+	aic_cmd_locked(sc, MM_KEY_DEL_REQ, TASK_MM, &req, sizeof(req),
+		MM_KEY_DEL_CFM, NULL, 0);
+}
+
+
+/* #pragma mark - data path */
+
+
+/*
+ * rwnx_rxdataind_aicwf(): a data frame is the 60-byte hardware RX header
+ * (struct hw_rxhdr, plus 4 bytes of SDIO alignment) and the received 802.11
+ * MPDU, already decrypted but with its security header still in place.
+ * Turn it into Ethernet frames as the Linux driver does (also splitting
+ * A-MSDUs); EAPOL goes to net80211's supplicant, the rest up the stack.
+ */
+#define AIC_RXH_DECR_WORD		36	/* hwvect status word: decr_status 4:2 */
+#define AIC_RXH_RSSI			17	/* rx_vect1.rssi1 */
+#define AIC_RXH_FLAGS_WORD		48	/* is_amsdu 0, is_80211_mpdu 1, ... */
+#define AIC_RXH_FLAG_80211_MPDU	0x02
+
+static void
+aic_rx_deliver(struct aic_softc *sc, const uint8_t *da, const uint8_t *sa,
+	const uint8_t *type, const uint8_t *body, size_t blen,
+	struct mbuf_list *ml)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	struct ether_header *eh;
+	struct mbuf *m;
+
+	if (blen + sizeof(*eh) + ETHER_ALIGN > MCLBYTES)
+		return;
+	m = aic_newbuf();
+	if (m == NULL) {
+		ifp->if_ierrors++;
+		return;
+	}
+	m->m_data += ETHER_ALIGN;
+	eh = mtod(m, struct ether_header *);
+	memcpy(eh->ether_dhost, da, ETHER_ADDR_LEN);
+	memcpy(eh->ether_shost, sa, ETHER_ADDR_LEN);
+	memcpy(&eh->ether_type, type, 2);
+	memcpy(eh + 1, body, blen);
+	m->m_pkthdr.len = m->m_len = sizeof(*eh) + blen;
+
+	if ((ic->ic_flags & IEEE80211_F_RSNON)
+			&& ntohs(eh->ether_type) == ETHERTYPE_EAPOL) {
+		if (sc->sc_eapol_logged < 8) {
+			sc->sc_eapol_logged++;
+			printf("%s: EAPOL rx %u bytes\n", AIC_NAME,
+				(unsigned)m->m_pkthdr.len);
+		}
+		ifp->if_ipackets++;
+		ieee80211_eapol_key_input(ic, m, ic->ic_bss);
+	} else
+		ml_enqueue(ml, m);
+}
+
+
+static void
+aic_rx_data(struct aic_softc *sc, const uint8_t *p, size_t len)
+{
+	static const uint8_t llc[6] = { 0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00 };
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	struct mbuf_list ml = MBUF_LIST_INITIALIZER();
+	const uint8_t *f, *da, *sa, *body;
+	size_t flen, hdr, sec, off;
+	uint32_t flags, status;
+
+	if (len < AIC_RX_HWHDR_LEN)
+		return;
+	flen = p[0] | (p[1] << 8);
+	if (flen + AIC_RX_HWHDR_LEN > len)
+		return;
+	flags = le32dec(p + AIC_RXH_FLAGS_WORD);
+	status = le32dec(p + AIC_RXH_DECR_WORD);
+	f = p + AIC_RX_HWHDR_LEN;
+
+	if ((flags & AIC_RXH_FLAG_80211_MPDU) != 0) {
+		/* management frames: the firmware handles auth/assoc itself */
+		sc->sc_rx_mgmt++;
+		return;
+	}
+	if (ic->ic_state != IEEE80211_S_RUN || flen < 24
+			|| (f[0] & IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_DATA)
+		return;
+
+	hdr = 24;
+	int amsdu = 0;
+	if (f[0] & IEEE80211_FC0_SUBTYPE_QOS) {
+		hdr += 2;
+		amsdu = (f[24] & IEEE80211_QOS_AMSDU) != 0;
+	}
+	if (f[1] & IEEE80211_FC1_ORDER)
+		hdr += 4;		/* HT control */
+	if ((f[1] & IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_FROMDS) {
+		da = f + 4;		/* addr1 */
+		sa = f + 16;	/* addr3 */
+	} else {
+		da = f + 4;
+		sa = f + 10;
+	}
+	switch ((status >> 2) & 7) {
+	case 0:				sec = 0; break;	/* unencrypted */
+	case 1:				sec = 4; break;	/* WEP */
+	case 7:				sec = 18; break;	/* WAPI */
+	default:			sec = 8; break;	/* TKIP, CCMP, GCMP */
+	}
+	if (hdr + sec > flen)
+		return;
+	off = hdr + sec;
+
+	if (!amsdu) {
+		if (off + 8 > flen || memcmp(f + off, llc, 6) != 0) {
+			ifp->if_ierrors++;
+			return;
+		}
+		aic_rx_deliver(sc, da, sa, f + off + 6, f + off + 8,
+			flen - off - 8, &ml);
+	} else {
+		/* A-MSDU subframes: DA, SA, length, LLC + payload, pad to 4 */
+		while (off + 14 + 8 <= flen) {
+			size_t slen = (f[off + 12] << 8) | f[off + 13];
+			if (slen < 8 || off + 14 + slen > flen)
+				break;
+			body = f + off + 14;
+			if (memcmp(body, llc, 6) == 0)
+				aic_rx_deliver(sc, f + off, f + off + 6, body + 6,
+					body + 8, slen - 8, &ml);
+			off += roundup(14 + slen, 4);
+		}
+	}
+	if_input(ifp, &ml);
+}
+
+
+/*
+ * rwnx_start_xmit() + aicwf_sdio_aggr() (one frame per write): 4-byte SDIO
+ * header (type 0x01 data, CRC-8 on the D80), struct txdesc_api, then the
+ * frame without its Ethernet header; padded to 4, tail, 512-byte blocks.
+ */
+struct aic_hostdesc {			/* ipc_shared.h struct hostdesc, FULLMAC */
+	uint16_t	packet_len;
+	uint16_t	flags_ext;
+	uint32_t	hostid;
+	uint8_t		eth_dest_addr[6];
+	uint8_t		eth_src_addr[6];
+	uint8_t		ethertype[2];	/* big endian, as on the wire */
+	uint8_t		ac;
+	uint8_t		tid;
+	uint8_t		vif_idx;
+	uint8_t		staid;
+	uint16_t	flags;
+} __packed;
+
+#define AIC_SDIO_TYPE_DATA		0x01
+#define AIC_DATA_FLOW_THRESH	2	/* DATA_FLOW_CTRL_THRESH */
+
+static int
+aic_tx(struct aic_softc *sc, struct mbuf *m)
+{
+	uint8_t *b = sc->sc_txbuf;
+	struct aic_hostdesc *d = (struct aic_hostdesc *)(b + 4);
+	struct ether_header eh;
+	size_t plen, len, total;
+	int buffers;
+	status_t status;
+
+	if (m->m_pkthdr.len < (int)sizeof(eh))
+		return EINVAL;
+	plen = m->m_pkthdr.len - sizeof(eh);
+	if (4 + sizeof(*d) + plen + AIC_TAIL_LEN + 4 > AIC_TXBUF_SIZE)
+		return EMSGSIZE;
+	m_copydata(m, 0, sizeof(eh), (caddr_t)&eh);
+
+	memset(b, 0, 4 + sizeof(*d));
+	len = sizeof(*d) + plen;
+	b[0] = len & 0xff;
+	b[1] = (len >> 8) & 0x0f;
+	b[2] = AIC_SDIO_TYPE_DATA;
+	b[3] = aic_crc8_ponl_107(b, 3);
+	d->packet_len = htole16(plen);
+	memcpy(d->eth_dest_addr, eh.ether_dhost, 6);
+	memcpy(d->eth_src_addr, eh.ether_shost, 6);
+	memcpy(d->ethertype, &eh.ether_type, 2);
+	d->tid = 0;
+	d->ac = AC_BE;
+	d->vif_idx = sc->sc_vif_idx;
+	d->staid = sc->sc_ap_idx;
+	m_copydata(m, sizeof(eh), plen, (caddr_t)(b + 4 + sizeof(*d)));
+
+	total = roundup(4 + len, 4);
+	memset(b + 4 + len, 0, total - (4 + len) + AIC_TAIL_LEN);
+	if (total % AIC_BLOCK_SIZE != 0)
+		total += AIC_TAIL_LEN;
+	total = roundup(total, AIC_BLOCK_SIZE);
+	if (total > AIC_TXBUF_SIZE)
+		return EMSGSIZE;
+
+	buffers = aic_flow_ctrl(sc);
+	if (buffers <= AIC_DATA_FLOW_THRESH)
+		return ENOBUFS;
+	status = SDIO_OPS(sc)->write(SDIO_COOKIE(sc), 1, AIC_REG_WR_FIFO, b,
+		total, 0);
+	if (status != B_OK) {
+		printf("%s: data write (%u bytes) failed: %s\n", AIC_NAME,
+			(unsigned)total, strerror(status));
+		return aic_status_to_errno(status);
+	}
+	return 0;
+}
+
+
+static void
+aic_start(struct ifnet *ifp)
+{
+	struct aic_softc *sc = ifp->if_softc;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct mbuf *m;
+
+	for (;;) {
+		if (ic->ic_state != IEEE80211_S_RUN || !sc->sc_connected) {
+			/* nothing can leave yet; drop what is queued */
+			IFQ_DEQUEUE(&ifp->if_snd, m);
+			if (m == NULL)
+				break;
+			m_freem(m);
+			continue;
+		}
+		IFQ_DEQUEUE(&ifp->if_snd, m);
+		if (m == NULL)
+			break;
+		if (m->m_pkthdr.len >= (int)sizeof(struct ether_header)
+				&& ntohs(mtod(m, struct ether_header *)->ether_type)
+					== ETHERTYPE_EAPOL && sc->sc_eapol_logged < 16) {
+			sc->sc_eapol_logged++;
+			printf("%s: EAPOL tx %d bytes\n", AIC_NAME, m->m_pkthdr.len);
+		}
+		rw_enter_write(&sc->sc_sdmmc.sc_lock);
+		int error = aic_tx(sc, m);
+		rw_exit(&sc->sc_sdmmc.sc_lock);
+		if (error != 0)
+			ifp->if_oerrors++;
+		else
+			ifp->if_opackets++;
+		m_freem(m);
+	}
+}
+
+
+/* firmware indications and RX data, outside the SDIO lock, in task context */
 static void
 aic_ind_task(void *arg)
 {
@@ -1288,11 +1917,27 @@ aic_ind_task(void *arg)
 			break;
 
 		switch (ind->id) {
+		case AIC_IND_DATA:
+			aic_rx_data(sc, ind->data, ind->len);
+			break;
+		case AIC_IND_WATCHDOG:
+			aic_watchdog_fired(sc);
+			break;
 		case SCANU_RESULT_IND:
 			aic_scan_result(sc, ind->data, ind->len);
 			break;
 		case SCANU_START_CFM:
 			aic_scan_done(sc, ind->data, ind->len);
+			break;
+		case SM_CONNECT_IND:
+			aic_connect_ind(sc, ind->data, ind->len);
+			break;
+		case SM_DISCONNECT_IND:
+			aic_disconnect_ind(sc, ind->data, ind->len);
+			break;
+		case MM_CHANNEL_SURVEY_IND:
+			/* per-channel busy time and noise after each scanned
+			 * channel (Linux keeps it for nl80211 survey); not used */
 			break;
 		default:
 			if (sc->sc_unsolicited_logged < 16) {
@@ -1312,7 +1957,10 @@ static int
 aic_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct aic_softc *sc = ic->ic_softc;
-	struct ifnet *ifp = &ic->ic_if;
+
+	/* leaving a join or a link: tell the firmware */
+	if (nstate <= IEEE80211_S_SCAN && ic->ic_state >= IEEE80211_S_AUTH)
+		aic_disconnect(sc);
 
 	switch (nstate) {
 	case IEEE80211_S_SCAN:
@@ -1327,32 +1975,21 @@ aic_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 		ic->ic_state = nstate;
 		return 0;
 	case IEEE80211_S_AUTH:
-	case IEEE80211_S_ASSOC:
-	case IEEE80211_S_RUN:
-		/* TODO milestone 3: SM_CONNECT_REQ */
-		if (sc->sc_scans <= 4)
-			printf("%s: joining is not implemented yet\n", AIC_NAME);
+		/* as bwfm_newstate(): the firmware joins, net80211 waits */
+		ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_INITIALIZE;
+		if (aic_connect(sc) != 0) {
+			ic->ic_bss->ni_fails++;
+			ieee80211_begin_scan(&ic->ic_if);
+			return 0;
+		}
+		ic->ic_state = nstate;
+		if (ic->ic_flags & IEEE80211_F_RSNON)
+			ic->ic_bss->ni_rsn_supp_state = RSNA_SUPP_PTKSTART;
 		return 0;
 	default:
 		break;
 	}
-	(void)ifp;
 	return sc->sc_newstate(ic, nstate, arg);
-}
-
-
-static void
-aic_start(struct ifnet *ifp)
-{
-	/* nothing goes out before milestone 3; drop what is queued */
-	struct mbuf *m;
-
-	for (;;) {
-		IFQ_DEQUEUE(&ifp->if_snd, m);
-		if (m == NULL)
-			break;
-		m_freem(m);
-	}
 }
 
 
@@ -1470,6 +2107,9 @@ aic_net_attach(struct aic_softc *sc)
 
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = aic_newstate;
+	ic->ic_send_mgmt = aic_send_mgmt;
+	ic->ic_set_key = aic_set_key;
+	ic->ic_delete_key = aic_delete_key;
 
 	IEEE80211_ADDR_COPY(IF_LLADDR(ifp), ic->ic_myaddr);
 	IEEE80211_ADDR_COPY(ic->ic_ac.ac_enaddr, ic->ic_myaddr);
@@ -1509,6 +2149,10 @@ aic_sdio_attach(device_t dev)
 	TAILQ_INIT(&sc->sc_indq);
 	mtx_init(&sc->sc_indq_mtx, IPL_NET);
 	task_set(&sc->sc_ind_task, aic_ind_task, sc);
+	timeout_set(&sc->sc_watchdog_to, aic_watchdog, sc);
+	sc->sc_pairwise_hw = AIC_NO_KEY;
+	memset(sc->sc_group_hw, AIC_NO_KEY, sizeof(sc->sc_group_hw));
+	sc->sc_poll_thread = -1;
 
 	if (sdmmc_haiku_attach(&sc->sc_sdmmc, hdev) != 0) {
 		printf("%s: cannot set up the SDIO card\n", AIC_NAME);
@@ -1542,16 +2186,13 @@ aic_sdio_attach(device_t dev)
 	if_alloc_inplace(ifp, IFT_ETHER);
 	aic_net_attach(sc);
 
-	/* from here on replies and indications come by card interrupt */
-	sc->sc_ih = sdmmc_intr_establish(&sc->sc_sdmmc, aic_intr, sc, AIC_NAME);
-	if (sc->sc_ih != NULL) {
-		rw_enter_write(&sc->sc_sdmmc.sc_lock);
-		sdmmc_intr_enable(sc->sc_sf);
-		rw_exit(&sc->sc_sdmmc.sc_lock);
-	}
-	printf("%s: attached, card interrupt %s (joining comes in milestone 3)\n",
-		AIC_NAME, (sc->sc_sdmmc.sc_intr_enabled & 2) != 0 ? "on"
-			: "NOT available, scan results will not arrive");
+	/* from here on replies, indications and data come by polling */
+	sc->sc_poll_thread = spawn_kernel_thread(aic_poll_thread, "aic8800 rx",
+		B_REAL_TIME_DISPLAY_PRIORITY, sc);
+	if (sc->sc_poll_thread >= 0)
+		resume_thread(sc->sc_poll_thread);
+	printf("%s: attached, RX by polling (%s)\n", AIC_NAME,
+		sc->sc_poll_thread >= 0 ? "1-10 ms" : "NO poll thread");
 	return 0;
 
 fail:
@@ -1569,8 +2210,13 @@ aic_sdio_detach(device_t dev)
 	struct aic_softc *sc = device_get_softc(dev);
 	struct ifnet *ifp = &sc->sc_ic.ic_if;
 
-	/* sdmmc_haiku_detach() below also removes the card interrupt */
-	sc->sc_ih = NULL;
+	if (sc->sc_poll_thread >= 0) {
+		status_t ret;
+		sc->sc_poll_quit = 1;
+		wait_for_thread(sc->sc_poll_thread, &ret);
+		sc->sc_poll_thread = -1;
+	}
+	timeout_del(&sc->sc_watchdog_to);
 	if (sc->sc_fw_up) {
 		ieee80211_ifdetach(ifp);
 		if_detach(ifp);

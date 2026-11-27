@@ -108,6 +108,11 @@ The bus manager side is described in
 * SDIO interrupt: RINTSTS/INTMASK bit 16 (slot 0). The ISR acks it, masks it
   and releases the bus manager's semaphore. `enable_sdio_irq` unmasks it.
   RINTSTS clears before commands leave bit 16 alone.
+  While no one has the host SDIO interrupt enabled, the ISR acks a raw bit
+  16 anyway: it latches during 1-bit enumeration, and on the JH7110 a
+  masked raw bit holds the line up. The VF2 Lite's aic8800 polls instead of
+  using this interrupt (StarFive's DTs have no `cap-sdio-irq`; see
+  docs/beacon/FINDINGS.md).
 * `set_card_type(CARD_TYPE_SDIO)` turns off the CLKENA low-power gate: the
   card needs a running clock to signal its interrupt.
 * Probe without card detect: CMD52 I/O reset, CMD0, CMD8, **CMD5** first,

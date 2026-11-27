@@ -787,3 +787,51 @@ File: src/add-ons/kernel/drivers/network/wlan/aic8800/if_aic_sdio.c (README has 
   chip-side enable is fn1 0x00 = 0x07, which bring-up already writes. Synchronous commands still
   poll under the same lock, so a reply is never lost between the two paths.
 - Network names and addresses are not logged; the success line is "scan done, status 0, N results".
+
+**vf2lite-15 result (2026-11-26): MILESTONE 2 CONFIRMED ON HARDWARE (scan).** Stack start (5 GHz
+supported), RF calibrated, station interface up (vif 0), scan on 22 channels, "scan done, status 0,
+7 results (firmware 5)", then periodic rescans; Network prefs lists the networks.
+
+### JH7110 dw_mmc: the SDIO card interrupt is not usable on the VF2 Lite (polling instead) — pending
+* **Seen (vf2lite-15):** with the handler installed (INTMASK bit 16, CTRL int_enable, CCCR IEN 0x03)
+  one host interrupt arrived, then none: "card interrupt found by polling INT_PENDING (0x02); the
+  host SDIO interrupt did not fire". Before that, while bit 16 was masked, sdio1's handler got
+  unclaimed interrupts with RINTSTS 0x10000 (raw SDIO bit only). The bit had latched during the
+  1-bit enumeration (RINTSTS 0x10004 right after the 1-bit CMD53 check) and was never acked.
+* **PLIC source:** 75 is right. Every JH7110 DT (mainline, StarFive 6.6 and 6.12) gives mmc1
+  `interrupts = <75>`, and sdio1's handler is the one being called.
+* **Why polling:** StarFive's own DTs, the Lite's included, leave `cap-sdio-irq` out of mmc1 (the
+  CM board has it commented out). So their Linux runs the MMC core's polling sdio_irq_thread, never
+  the host interrupt. On the JH7110 a masked raw status bit also holds the line up (see the RV
+  "SDIO host interrupt disabled by the kernel" entry), which makes a mask-then-dispatch scheme storm.
+* **Fix:** aic8800 no longer installs a card interrupt. A thread polls the chip's own status
+  (fn1 0x04): every 10 ms when idle, halving to 1 ms while frames arrive, as Linux does without
+  MMC_CAP_SDIO_IRQ. dw_mmc acks a raw SDIO bit while nobody uses the host SDIO interrupt, so a stale
+  latch cannot hold the line up. The RV (bwfm, host interrupt in use) is unchanged.
+  Files: aic8800/if_aic_sdio.c (aic_poll_thread), busses/mmc/dw_mmc/DwMmc.cpp (_HandleInterrupt).
+
+### AIC8800 scan details — pending
+* Message 0x004f is MM_CHANNEL_SURVEY_IND: one per scanned channel (busy time, noise). Linux keeps it
+  for nl80211 survey; it is now ignored without a log line.
+* "7 results (firmware 5)": the firmware counts networks, but sends one SCANU_RESULT_IND per frame,
+  and one network can answer with a beacon and a probe response. The log now shows frames and
+  distinct BSSIDs. net80211 merges them into one node anyway.
+* After a data CRC error on a 2-block FIFO read (RINTSTS 0xa8), the scan-done message was lost and
+  the driver never scanned again ("scanning" stayed set, so later SCAN states sent nothing). A 15 s
+  watchdog now ends a stuck scan, or a connect with no answer, and starts again.
+
+## AIC8800D80 driver (aic8800), milestone 3 "join" (pending, vf2lite-16)
+
+Same model as bwfm on OpenBSD: the firmware does 802.11 auth/assoc (SM_CONNECT_REQ, answered by
+SM_CONNECT_IND), net80211 runs the WPA2-PSK 4-way handshake, and the keys go into the firmware
+(MM_KEY_ADD). For WPA the connect request sets CONTROL_PORT_HOST, so the firmware passes only
+EAPOL until ME_SET_CONTROL_PORT opens the port after the pairwise key. Queued frames are flushed
+before a key is installed, so message 4 leaves unencrypted.
+- RX data comes as the 802.11 MPDU after a 60-byte hardware header. It is already decrypted, but the
+  CCMP/TKIP header is still in it, so 8 bytes are skipped before the LLC header. hw_rxhdr's
+  decr_status is in the hwvect status word (byte 36, bits 4:2); is_80211_mpdu is bit 1 of the flags
+  word at byte 48 (layouts computed from rwnx_rx.h with a host compiler).
+- RX frames are queued to the same task as the indications, in FIFO order. So EAPOL message 1, which
+  can follow SM_CONNECT_IND in the same FIFO read, is handled after the state reaches RUN.
+- TX: struct hostdesc (28 bytes) after a 4-byte SDIO data header (type 0x01, CRC-8 on the D80), then
+  the frame without its Ethernet header (Linux rwnx_start_xmit + aicwf_sdio_aggr).
