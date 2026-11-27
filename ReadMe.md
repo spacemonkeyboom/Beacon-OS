@@ -88,25 +88,35 @@ Beacon 0.2:
   <img src="docs/beacon/screenshots/desktop-terminal.jpg" alt="Beacon desktop with Terminal running the SSH server" width="860">
 </p>
 
-## First target: Orange Pi RV (StarFive JH7110, RISC-V)
+## First targets: StarFive JH7110 boards (RISC-V)
+
+One image (0.5 and later) boots all three boards from a microSD card, using
+each board's own U-Boot; nothing on the board is changed.
+
+| Area | VisionFive 2 Lite (JH7110S) | VisionFive 2 (JH7110) | Orange Pi RV (JH7110) |
+|---|---|---|---|
+| Boot from microSD (vendor U-Boot, EFI) | Works | Works (boot switches on **L**, QSPI) | Works |
+| 4 CPU cores (U74), RAM | Works | Works | Works |
+| HDMI desktop | Works | Works | Works (1920x1080) |
+| USB keyboard, mouse | Works (new Cadence USB 3 driver) | Works (VL805 over PCIe) | Works (VL805 over PCIe, hot-plug) |
+| **Wi-Fi** | **Works (0.5):** built-in AIC8800D80, new `aic8800` driver; scan, WPA2, DHCP, reconnects after a power cycle | No built-in Wi-Fi | Works: AP6256 (BCM43456), scan, WPA/WPA2, DHCP |
+| **Audio** | **Works (0.5): HDMI** (the Lite has no headphone jack) | HDMI and 3.5 mm jack | 3.5 mm jack and HDMI, switchable while playing (`audio_output`) |
+| Wired Ethernet | In the image, not tested yet | In the image, not tested yet | In the image (please report results) |
+| Web browser: WebPositive (HTTPS) | Works | Works | Works |
+| Restart from the menu | Doesn't reset the board yet: power off and on | Not tested | Doesn't reset the board yet: power off and on |
+| Bluetooth | Planned | Planned | Planned |
+
+On all three boards:
 
 | Area | Status |
 |---|---|
-| Boot from a single microSD card (vendor U-Boot, EFI) | Works |
-| 4 CPU cores (U74), RAM | Works |
-| HDMI desktop (1920x1080) | Works (display state carried over from U-Boot) |
-| USB 3 ports (VIA VL805 over PCIe): keyboard, mouse, hot-plug | Works (VL805 fixes in the xHCI driver) |
 | microSD card | Works (new `dw_mmc` driver, PIO) |
 | Serial console (UART0, 115200 8N1) + kernel debugger | Works (Ctrl+] enters the debugger) |
-| Wired Ethernet | In the image from 0.3 (new; please report results) |
-| Wi-Fi (AP6256 / BCM43456 over SDIO) | Works: scan, WPA/WPA2, DHCP; stable under load from 0.3 (25 MHz SDIO, ~170 KB/s for now) |
-| Full desktop: 37 apps, 22 preference panels; gcc 13, make, git and the Haiku headers on the board | Works (0.3) |
-| Bluetooth | Planned |
-| Audio: 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | Works (some pops) |
+| Full desktop: 37 apps, 22 preference panels; gcc 13, make, git and the Haiku headers on the board | Works |
 | System sounds (Kenney "Interface Sounds", CC0) | Works |
-| Web browser: WebPositive (HaikuWebKit 1.10.0, HTTPS) | Works (0.4.1); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
+| WebPositive (HaikuWebKit 1.10.0) | Works (0.4.1); no JIT/WebGL yet. Packages for other Haiku riscv64 systems: see [Releases](https://github.com/spacemonkeyboom/Beacon-OS/releases) and [WEBKIT.md](docs/beacon/WEBKIT.md) |
 | Qt 5 (Core, Gui, Widgets, Network) | Runs on the board (test app); see [QT5.md](docs/beacon/QT5.md) |
-| Beacon's own Chromium-engine browser (Qt 6 WebEngine) | In progress: Qt 6, then QtWebEngine 6, then the browser |
+| Beacon's own browser, [Webscape Netfarer](https://github.com/spacemonkeyboom/Webscape-Netfarer) (Firefox-based) | Compiling for riscv64 |
 | OpenGL (Mesa, software) and Vulkan | OpenGL built, testing; Vulkan planned |
 
 **For other projects:** [docs/beacon/FINDINGS.md](docs/beacon/FINDINGS.md)
@@ -146,7 +156,7 @@ Known issues:
    * or [balenaEtcher](https://etcher.balena.io/): *Flash from file* → the
      `.xz` file → *Select target* → your card → *Flash!*
    * To check the download first, in PowerShell:
-     `Get-FileHash .\beacon-0.3-orangepi-rv.mmc.image.xz` and compare it with the
+     `Get-FileHash .\beacon-0.5-riscv64.mmc.image.xz` and compare it with the
      `.sha256` file.
    * Windows may offer to "format" the card afterwards: click **Cancel**. Windows
      cannot read Beacon's file system; that is normal.
@@ -179,12 +189,12 @@ marked **security** without exploit details and we will follow up.
 ## Building
 
 Beacon builds like Haiku (see [ReadMe.Compiling.md](ReadMe.Compiling.md)).
-For the Orange Pi RV image:
+For the image (all three boards):
 
 ```
 mkdir generated.riscv64 && cd generated.riscv64
 ../configure --cross-tools-source ../../buildtools --build-cross-tools riscv64 -j4
-jam -q -j4 @nightly-mmc     # full image (0.4); @minimum-mmc for a small one
+jam -q -j4 @nightly-mmc     # full image; @minimum-mmc for a small one
 ```
 
 ## Licences
