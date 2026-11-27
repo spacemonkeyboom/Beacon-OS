@@ -1939,6 +1939,15 @@ aic_ind_task(void *arg)
 			/* per-channel busy time and noise after each scanned
 			 * channel (Linux keeps it for nl80211 survey); not used */
 			break;
+		case MM_CHANNEL_SWITCH_IND:
+			/* the firmware moved the vif to a channel context (at
+			 * connect); Linux uses it for its channel bookkeeping */
+			break;
+		case ME_TX_CREDITS_UPDATE_IND:
+			/* per-TID TX credits changed (a block-ack session with the
+			 * AP); Linux resizes its TX queues. We send one frame at a
+			 * time against the SDIO flow control, so nothing to do */
+			break;
 		default:
 			if (sc->sc_unsolicited_logged < 16) {
 				sc->sc_unsolicited_logged++;

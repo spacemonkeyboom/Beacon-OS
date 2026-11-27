@@ -54,13 +54,18 @@ Reference only (board wiring, not code): StarFive `linux`
 `JH7110_VisionFive2_6.12.y_devel` at `4cecf169f3` (VF2 Lite device tree,
 `dw_mmc-starfive.c` WL_REG_ON handling).
 
-## Firmware: not included
+## Firmware: separate package
 
-The chip needs AIC's firmware (`fmacfw_8800d80_u02.bin`). AIC has not given
-redistribution permission (the upstream RFC says so too), so Beacon ships no
-firmware, in the repo or in public images. The driver loads it at run time
-from `/boot/system/non-packaged/data/firmware/aic8800/` (or the packaged
-`/boot/system/data/firmware/aic8800/`).
+The chip needs AIC's proprietary firmware (`fmacfw_8800d80_u02.bin`). AIC has
+given no licence (the upstream RFC says so too). It is never in the
+repository and never in this driver's package. Like Armbian, Beacon images
+may carry it unmodified in the separate `aic8800_firmware` package, with this
+NOTICE: "Proprietary firmware by AICSemi. Redistributed unmodified, only for
+use with AIC8800 hardware, non-commercially, as Armbian and board vendors do.
+Removed on request." Provenance with md5s:
+`data/beacon/aic8800_firmware/PROVENANCE`. The driver loads it at run time
+from `/boot/system/non-packaged/data/firmware/aic8800/` or the packaged
+`/boot/system/data/firmware/aic8800/`.
 
 ## Also consulted (revision handling)
 

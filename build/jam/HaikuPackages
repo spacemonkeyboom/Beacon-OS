@@ -22,6 +22,11 @@ if $(HAIKU_BUILD_TYPE) = test {
 	packages += HaikuUnitTests ;
 }
 
+# Beacon: AIC8800 firmware package, only when its files are supplied
+if $(BEACON_AIC8800_FIRMWARE_DIR) && $(TARGET_ARCH) = riscv64 {
+	packages += Aic8800Firmware ;
+}
+
 local archDependentPackages =
 	HaikuCrossDevel
 	WebPositive

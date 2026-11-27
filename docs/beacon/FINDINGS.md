@@ -771,7 +771,7 @@ log shows why the card went quiet and how it came back.
 - /dev/net/aic8800/0 appears, net_server starts it, and Network prefs shows the Wi-Fi interface.
   Link stays down because scanning is not written yet (milestone 2).
 
-## AIC8800D80 driver (aic8800), milestone 2 "scan" (pending, vf2lite-15)
+## AIC8800D80 driver (aic8800), milestone 2 "scan" (confirmed, vf2lite-15)
 
 File: src/add-ons/kernel/drivers/network/wlan/aic8800/if_aic_sdio.c (README has the full order).
 - After firmware up the LMAC needs more set-up before it scans, in the order of Linux
@@ -795,7 +795,7 @@ File: src/add-ons/kernel/drivers/network/wlan/aic8800/if_aic_sdio.c (README has 
 supported), RF calibrated, station interface up (vif 0), scan on 22 channels, "scan done, status 0,
 7 results (firmware 5)", then periodic rescans; Network prefs lists the networks.
 
-### JH7110 dw_mmc: the SDIO card interrupt is not usable on the VF2 Lite (polling instead) — pending
+### JH7110 dw_mmc: the SDIO card interrupt is not usable on the VF2 Lite (polling instead) — confirmed (polling works, vf2lite-16)
 * **Seen (vf2lite-15):** with the handler installed (INTMASK bit 16, CTRL int_enable, CCCR IEN 0x03)
   one host interrupt arrived, then none: "card interrupt found by polling INT_PENDING (0x02); the
   host SDIO interrupt did not fire". Before that, while bit 16 was masked, sdio1's handler got
@@ -813,7 +813,7 @@ supported), RF calibrated, station interface up (vif 0), scan on 22 channels, "s
   latch cannot hold the line up. The RV (bwfm, host interrupt in use) is unchanged.
   Files: aic8800/if_aic_sdio.c (aic_poll_thread), busses/mmc/dw_mmc/DwMmc.cpp (_HandleInterrupt).
 
-### AIC8800 scan details — pending
+### AIC8800 scan details — confirmed (vf2lite-16)
 * Message 0x004f is MM_CHANNEL_SURVEY_IND: one per scanned channel (busy time, noise). Linux keeps it
   for nl80211 survey; it is now ignored without a log line.
 * "7 results (firmware 5)": the firmware counts networks, but sends one SCANU_RESULT_IND per frame,
@@ -823,7 +823,7 @@ supported), RF calibrated, station interface up (vif 0), scan on 22 channels, "s
   the driver never scanned again ("scanning" stayed set, so later SCAN states sent nothing). A 15 s
   watchdog now ends a stuck scan, or a connect with no answer, and starts again.
 
-## AIC8800D80 driver (aic8800), milestone 3 "join" (pending, vf2lite-16)
+## AIC8800D80 driver (aic8800), milestone 3 "join" (confirmed, vf2lite-16)
 
 Same model as bwfm on OpenBSD: the firmware does 802.11 auth/assoc (SM_CONNECT_REQ, answered by
 SM_CONNECT_IND), net80211 runs the WPA2-PSK 4-way handshake, and the keys go into the firmware
@@ -850,3 +850,20 @@ library test on an Orange Pi RV; after the fix 15/16 checks pass (ffi, libevent,
 HarfBuzz, cairo/pixman, VP9, NSS, dlopen). The VP8 failure was a test bug (packets must be drained
 after every vpx_codec_encode call; VP8 has no lag). With the bundled fonts.conf, bundle_v3 passes
 16/16 on the RV, and sans-serif resolves to Noto Sans with HarfBuzz ligatures (17 glyphs for 19 chars).
+
+**vf2lite-16 result (2026-11-26): MILESTONE 3 CONFIRMED ON HARDWARE (WPA2-PSK join + data).**
+- connecting (WPA, channel 6), associated (aid 9, QoS), ASSOC -> RUN, four EAPOL messages, pairwise and
+  group keys installed, link up. DHCP gave an address, the user pinged the internet from the Lite,
+  and a laptop pinged the Lite with 0% loss. RX polling (no card interrupt) carries it.
+- Two indications are now handled without a log line: 0x0044 = MM_CHANNEL_SWITCH_IND (the firmware moved
+  the vif to its channel context, at connect), and 0x140b = ME_TX_CREDITS_UPDATE_IND (per-TID TX
+  credits after a block-ack session; Linux resizes its queues, and we send one frame at a time).
+
+### AIC8800 firmware as a separate package (Armbian-style) — pending
+`aic8800_firmware.hpkg` carries the 15 unmodified files of StarFive's aic8800d80-sdio-wifi-firmware 2.2,
+with NOTICE and PROVENANCE (md5s match the Debian package) in /boot/system/data/firmware/aic8800/.
+The driver already searches there after non-packaged. The files stay out of the repository: the build
+takes them from BEACON_AIC8800_FIRMWARE_DIR and skips the package without it. Boards without the chip
+(Orange Pi RV, VF2) are unaffected: aic8800 does not match them.
+Files: build/jam/packages/Aic8800Firmware, src/data/package_infos/any/aic8800_firmware,
+data/beacon/aic8800_firmware/.

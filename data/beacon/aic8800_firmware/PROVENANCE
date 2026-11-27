@@ -1,0 +1,31 @@
+aic8800_firmware: provenance
+
+Source: StarFive's official Debian image for the JH7110 (release 202510,
+starfive-jh7110-202510-minimal-desktop-wayland.img.bz2), Debian package
+aic8800d80-sdio-wifi-firmware 2.2 ("AIC8800D80 SDIO WIFI FIRMWIRE FOR
+VF2_LITE", maintainer "StarFive Debian", architecture all), installed in
+/lib/firmware/aic8800_sdio. Copied 2026-11-26.
+
+The files are unmodified. Their md5 sums match the Debian package's own
+md5sums file (DEBIAN/md5sums), listed here as the package gives them:
+
+d5831864e5cead4df2cc207c563c4bb3  lib/firmware/aic8800_sdio/aic_powerlimit_8800d80.txt
+4c1619f2ad65562412588a297dfbc86f  lib/firmware/aic8800_sdio/aic_userconfig_8800d80.txt
+ee2b069a95406730633d8b70fe4d2fbf  lib/firmware/aic8800_sdio/fmacfw_8800d80_h_u02.bin
+4d328a42493f956b48b880b4c51fb6a7  lib/firmware/aic8800_sdio/fmacfw_8800d80_h_u02_ipc.bin
+2a1b4cfb1d8f590b719f43b10ff65a89  lib/firmware/aic8800_sdio/fmacfw_8800d80_u02.bin
+5fa9b468def368a040577533372466b1  lib/firmware/aic8800_sdio/fmacfw_8800d80_u02_ipc.bin
+49833b81ef162c9133d197d7caecaa3f  lib/firmware/aic8800_sdio/fmacfwbt_8800d80_h_u02.bin
+ea97bed7aacade1e8e9919b597b5bff6  lib/firmware/aic8800_sdio/fmacfwbt_8800d80_u02.bin
+f546881a81b960d89a672578eb45a809  lib/firmware/aic8800_sdio/fw_adid_8800d80_u02.bin
+8a96b6d133dfc768aadf1ac3b1e15bd2  lib/firmware/aic8800_sdio/fw_patch_8800d80_u02.bin
+7f0966305d8637e86ad1c13b24a0a728  lib/firmware/aic8800_sdio/fw_patch_8800d80_u02_ext0.bin
+3761e5ee1d9ed73409057a0627e0109a  lib/firmware/aic8800_sdio/fw_patch_8800d80_u04.bin
+cf3ad67820e4659c02b2e76498d85eb3  lib/firmware/aic8800_sdio/fw_patch_table_8800d80_u02.bin
+43327ec4d2282f64c065688f92f892d3  lib/firmware/aic8800_sdio/fw_patch_table_8800d80_u04.bin
+0cc2666fb211309cf28e9ee86ce8aa5f  lib/firmware/aic8800_sdio/lmacfw_rf_8800d80_u02.bin
+
+The package carries no licence file and no licence text. Beacon ships the
+files in this separate package, as Armbian (armbian/firmware) and the board
+vendors do; see NOTICE. The aic8800 driver itself is GPL-2.0 and works
+without this package (it then reports that the firmware is missing).

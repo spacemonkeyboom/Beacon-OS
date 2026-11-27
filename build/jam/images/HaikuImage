@@ -39,5 +39,11 @@ if $(HAIKU_BUILD_TYPE) = test {
 	AddPackageFilesToHaikuImage system packages : haiku_unittests.hpkg ;
 }
 
+# Beacon: the AIC8800 firmware package (see build/jam/packages/Aic8800Firmware)
+if $(BEACON_AIC8800_FIRMWARE_DIR) && $(TARGET_ARCH) = riscv64 {
+	AddPackageFilesToHaikuImage system packages : aic8800_firmware.hpkg
+		: nameFromMetaInfo ;
+}
+
 # import what is shared by all images
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images definitions common-tail ] ;

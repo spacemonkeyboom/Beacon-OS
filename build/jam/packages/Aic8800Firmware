@@ -1,0 +1,40 @@
+# Beacon: aic8800_firmware.hpkg, the AIC8800D80 SDIO firmware in its own
+# package, the way Armbian ships it (separate from the GPL driver, files
+# unmodified, NOTICE + PROVENANCE beside them).
+#
+# The firmware files are NOT in the repository. Point the environment
+# variable BEACON_AIC8800_FIRMWARE_DIR at a folder holding them (see
+# data/beacon/aic8800_firmware/PROVENANCE for the exact files and md5s);
+# without it the package is not built and the image has no AIC firmware.
+
+local package = aic8800_firmware.hpkg ;
+HaikuPackage $(package) ;
+
+local files =
+	aic_powerlimit_8800d80.txt
+	aic_userconfig_8800d80.txt
+	fmacfw_8800d80_h_u02.bin
+	fmacfw_8800d80_h_u02_ipc.bin
+	fmacfw_8800d80_u02.bin
+	fmacfw_8800d80_u02_ipc.bin
+	fmacfwbt_8800d80_h_u02.bin
+	fmacfwbt_8800d80_u02.bin
+	fw_adid_8800d80_u02.bin
+	fw_patch_8800d80_u02.bin
+	fw_patch_8800d80_u02_ext0.bin
+	fw_patch_8800d80_u04.bin
+	fw_patch_table_8800d80_u02.bin
+	fw_patch_table_8800d80_u04.bin
+	lmacfw_rf_8800d80_u02.bin
+	;
+files = $(files:G=aic8800-firmware) ;
+SEARCH on $(files) = $(BEACON_AIC8800_FIRMWARE_DIR) ;
+AddFilesToPackage data firmware aic8800 : $(files) ;
+
+local notes = <aic8800-firmware>NOTICE <aic8800-firmware>PROVENANCE ;
+SEARCH on $(notes) = [ FDirName $(HAIKU_TOP) data beacon aic8800_firmware ] ;
+AddFilesToPackage data firmware aic8800 : $(notes) ;
+AddFilesToPackage data licenses : <aic8800-firmware>NOTICE
+	: "AIC8800 Firmware Notice" ;
+
+BuildHaikuPackage $(package) : aic8800_firmware ;

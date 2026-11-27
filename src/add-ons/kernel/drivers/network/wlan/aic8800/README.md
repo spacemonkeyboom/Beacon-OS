@@ -5,17 +5,21 @@ module = AIC8800D80 (SDIO ids 0xc8a1:0x0082), on JH7110 sdio1
 (dw_mmc @0x16020000, 4-bit, WL_REG_ON = GPIO33). Licence: GPL-2.0 (port of
 the Linux aic8800 driver, see THIRD_PARTY.md).
 
-Status (2026-11-26): milestone 1 ("fw up") and milestone 2 (scan)
-**confirmed** on the VF2 Lite (chip revisions U02 = 3 and U03/U04 = 7; the
-Lite has 7). Milestone 3 (join, open and WPA2-PSK, data) written,
-**pending** hardware test (vf2lite-16).
+Status (2026-11-26): milestones 1 ("fw up"), 2 (scan) and 3 (WPA2-PSK
+join, DHCP, data) **confirmed** on the VF2 Lite (chip revisions U02 = 3 and
+U03/U04 = 7; the Lite has 7).
 
-## Firmware (not shipped)
+## Firmware (separate package)
 
-Copy the AIC firmware to `/boot/system/non-packaged/data/firmware/aic8800/`:
-`fmacfw_8800d80_u02.bin` (or `fmacfw_8800d80_h_u02.bin` for the H variant).
-Without it the driver logs where it looked and does not attach. Beacon never
-puts these files in the repo or in public images (no licence).
+The driver loads `fmacfw_8800d80_u02.bin` (or `fmacfw_8800d80_h_u02.bin` for
+the H variant) from `/boot/system/non-packaged/data/firmware/aic8800/`, then
+`/boot/system/data/firmware/aic8800/`. Without it the driver logs where it
+looked and does not attach. The firmware is proprietary (AICSemi) and is
+never in the repository. Like Armbian, Beacon images can carry it in a
+separate package, `aic8800_firmware` (files unmodified, with NOTICE and
+PROVENANCE): build with `BEACON_AIC8800_FIRMWARE_DIR=<folder with the files>`
+in the environment (build/jam/packages/Aic8800Firmware); without that
+variable the package is not built.
 
 ## How it works
 
