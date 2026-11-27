@@ -18,19 +18,19 @@ Development is AI-assisted.
 
 ## 🎉 BEACON 0.5: ONE IMAGE, THREE BOARDS, AND WI-FI ON THE VISIONFIVE 2 LITE! 🎉
 
-# ✅ Orange Pi RV  ✅ VisionFive 2  ✅ VisionFive 2 Lite
+# ✅ Orange Pi RV  ✅ VisionFive 2 Lite  ✅ VisionFive 2
 
 **[Beacon 0.5](https://github.com/spacemonkeyboom/Beacon-OS/releases/tag/v0.5)
-(November 26, 2026):** one SD card image boots the **VisionFive 2 Lite**, the
-**VisionFive 2** and the **Orange Pi RV**, with no changes to the boards'
+(November 26, 2026):** one SD card image boots the **Orange Pi RV**, the
+**VisionFive 2 Lite** and the **VisionFive 2**, with no changes to the boards'
 firmware. The **Lite's built-in Wi-Fi works**, with a new Beacon driver for its
 AICSemi AIC8800D80 chip, written and brought up in a single day.
 
 | Board | Status |
 |---|---|
+| Orange Pi RV (JH7110) | Desktop, USB, Wi-Fi, audio, WebPositive |
 | VisionFive 2 Lite (JH7110S) | Desktop, built-in Wi-Fi (WPA2), USB keyboard and mouse, HDMI audio, WebPositive |
 | VisionFive 2 (JH7110) | Desktop, USB keyboard and mouse, HDMI audio |
-| Orange Pi RV (JH7110) | Desktop, USB, Wi-Fi, audio, WebPositive |
 
 What it took: a boot partition the StarFive firmware finds by itself,
 keeping the firmware's own memory out of the kernel's hands (the Lite's
@@ -93,17 +93,17 @@ Beacon 0.2:
 One image (0.5 and later) boots all three boards from a microSD card, using
 each board's own U-Boot; nothing on the board is changed.
 
-| Area | VisionFive 2 Lite (JH7110S) | VisionFive 2 (JH7110) | Orange Pi RV (JH7110) |
+| Area | Orange Pi RV (JH7110) | VisionFive 2 Lite (JH7110S) | VisionFive 2 (JH7110) |
 |---|---|---|---|
-| Boot from microSD (vendor U-Boot, EFI) | Works | Works (boot switches on **L**, QSPI) | Works |
+| Boot from microSD (vendor U-Boot, EFI) | Works | Works | Works (boot switches on **L**, QSPI) |
 | 4 CPU cores (U74), RAM | Works | Works | Works |
-| HDMI desktop | Works | Works | Works (1920x1080) |
-| USB keyboard, mouse | Works (new Cadence USB 3 driver) | Works (VL805 over PCIe) | Works (VL805 over PCIe, hot-plug) |
-| **Wi-Fi** | **Works (0.5):** built-in AIC8800D80, new `aic8800` driver; scan, WPA2, DHCP, reconnects after a power cycle | No built-in Wi-Fi | Works: AP6256 (BCM43456), scan, WPA/WPA2, DHCP |
-| **Audio** | **Works (0.5): HDMI** (the Lite has no headphone jack) | HDMI works; 3.5 mm jack not tested yet | 3.5 mm jack and HDMI, switchable while playing (`audio_output`) |
-| Wired Ethernet | In the image, not tested yet | In the image, not tested yet | In the image (please report results) |
+| HDMI desktop | Works (1920x1080) | Works | Works |
+| USB keyboard, mouse | Works (VL805 over PCIe, hot-plug) | Works (new Cadence USB 3 driver) | Works (VL805 over PCIe) |
+| **Wi-Fi** | Works: AP6256 (BCM43456), scan, WPA/WPA2, DHCP | **Works (0.5):** built-in AIC8800D80, new `aic8800` driver; scan, WPA2, DHCP, reconnects after a power cycle | No built-in Wi-Fi |
+| **Audio** | 3.5 mm jack and HDMI, switchable while playing (`audio_output`) | **Works (0.5): HDMI** (the Lite has no headphone jack) | HDMI works; 3.5 mm jack not tested yet |
+| Wired Ethernet | In the image (please report results) | In the image, not tested yet | In the image, not tested yet |
 | Web browser: WebPositive (HTTPS) | Works | Works | Works |
-| Restart from the menu | Doesn't reset the board yet: power off and on | Not tested | Doesn't reset the board yet: power off and on |
+| Restart from the menu | Doesn't reset the board yet: power off and on | Doesn't reset the board yet: power off and on | Not tested |
 | Bluetooth | Planned | Planned | Planned |
 
 On all three boards:
@@ -172,7 +172,7 @@ Known issues:
 
    Use the card's `/dev/disk/by-id/...` name (`ls /dev/disk/by-id/ | grep mmc`)
    so you cannot write to the wrong disk. This erases the card.
-3. Put the card in your board (VisionFive 2 Lite, VisionFive 2 or Orange Pi RV),
+3. Put the card in your board (Orange Pi RV, VisionFive 2 Lite or VisionFive 2),
    connect HDMI, a USB keyboard and mouse, and power on. The board's own U-Boot
    (in SPI flash) starts Beacon; nothing on the board is changed. On the
    **VisionFive 2**, set both boot switches to **L** (QSPI) first.
