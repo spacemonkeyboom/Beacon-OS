@@ -1498,11 +1498,25 @@ Volume::_CommitTransaction(BMessage* message,
 			&& handler.CurrentPackage() != NULL) {
 			_result.SetErrorPackage(handler.CurrentPackage()->FileName());
 		}
+		// Beacon: say what failed; the exceptions themselves log nothing.
+		ERROR("Volume::_CommitTransaction(): volume \"%s\": transaction"
+			" exception: error %d, package \"%s\", path1 \"%s\","
+			" path2 \"%s\", string1 \"%s\", string2 \"%s\","
+			" system error: %s\n", fPath.String(), (int)error,
+			_result.ErrorPackage().String(), exception.Path1().String(),
+			exception.Path2().String(), exception.String1().String(),
+			exception.String2().String(), strerror(exception.SystemError()));
 	} catch (std::bad_alloc& exception) {
 		error = B_TRANSACTION_NO_MEMORY;
+		ERROR("Volume::_CommitTransaction(): volume \"%s\": transaction"
+			" failed: out of memory\n", fPath.String());
 	}
 
 	_result.SetError(error);
+	if (error != B_TRANSACTION_OK) {
+		ERROR("Volume::_CommitTransaction(): volume \"%s\": %s\n",
+			fPath.String(), _result.FullErrorMessage().String());
+	}
 
 	// revert on error
 	if (error != B_TRANSACTION_OK)

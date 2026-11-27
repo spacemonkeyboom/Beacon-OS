@@ -141,13 +141,25 @@ CommitTransactionHandler::~CommitTransactionHandler()
 {
 	// Delete Package objects we created in case of error (on success
 	// fPackagesToActivate will be empty).
+	// Beacon: packages that also belong to fVolumeState must not be deleted
+	// here, since "delete fVolumeState" below frees them. In first boot
+	// processing every entry of fPackagesToActivate is such a package (taken
+	// from the cloned volume state), so an exception during first boot
+	// processing used to free each of them twice ("double free" in
+	// ~VolumeState()). The same can happen after _ChangePackageActivation()
+	// added new packages to fVolumeState and a later step threw.
 	int32 count = fPackagesToActivate.CountItems();
 	for (int32 i = 0; i < count; i++) {
 		Package* package = fPackagesToActivate.ItemAt(i);
 		if (fPackagesAlreadyAdded.find(package)
-				== fPackagesAlreadyAdded.end()) {
-			delete package;
+				!= fPackagesAlreadyAdded.end()) {
+			continue;
 		}
+		if (fVolumeState != NULL
+			&& fVolumeState->FindPackage(package->FileName()) == package) {
+			continue;
+		}
+		delete package;
 	}
 
 	delete fVolumeState;
@@ -429,17 +441,23 @@ CommitTransactionHandler::_ApplyChanges()
 
 		// activate/deactivate packages and create users, groups, settings files.
 		_ChangePackageActivation(fAddedPackages, fRemovedPackages);
-	} else // FirstBootProcessing, skip several steps and just do package setup.
+	} else { // FirstBootProcessing, skip several steps and just do package setup.
+		INFORM("First boot processing step: prepare packages.\n");
 		_PrepareFirstBootPackages();
+	}
 
 	// run post-install scripts now that the new packages are visible in the
 	// package file system.
 	if (fVolumeStateIsActive || fFirstBootProcessing) {
+		if (fFirstBootProcessing)
+			INFORM("First boot processing step: post-install scripts.\n");
 		_RunPostInstallScripts();
 	} else {
 		// Do post-install scripts later after a reboot, for Haiku OS packages.
 		_QueuePostInstallScripts();
 	}
+	if (fFirstBootProcessing)
+		INFORM("First boot processing step: done applying changes.\n");
 
 	// removed packages have been deleted, new packages shall not be deleted
 	fAddedPackages.clear();
@@ -706,6 +724,11 @@ void
 CommitTransactionHandler::_PreparePackageToActivate(Package* package)
 {
 	fCurrentPackage = package;
+
+	if (fFirstBootProcessing) {
+		INFORM("First boot processing: %s: groups, users, settings and"
+			" writable files.\n", package->FileName().String());
+	}
 
 	// add groups
 	const BStringList& groups = package->Info().Groups();
