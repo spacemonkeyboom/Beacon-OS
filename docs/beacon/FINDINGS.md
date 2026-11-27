@@ -867,3 +867,18 @@ takes them from BEACON_AIC8800_FIRMWARE_DIR and skips the package without it. Bo
 (Orange Pi RV, VF2) are unaffected: aic8800 does not match them.
 Files: build/jam/packages/Aic8800Firmware, src/data/package_infos/any/aic8800_firmware,
 data/beacon/aic8800_firmware/.
+
+### package_daemon double free on first boot — fix pending hardware test
+Every board's first boot showed a debug_server dialog: `double free` in package_daemon, stack
+`free <- ~VolumeState <- ~CommitTransactionHandler <- Volume::_CommitTransaction <- Root::_JobRunner`
+(also in older rv53/rv57 logs; not riscv-specific). Cause, in upstream code: the first-boot
+transaction (posted by Volume::InitPackages when the administrative directory is new) fills
+`fPackagesToActivate` with Package objects owned by the handler's cloned VolumeState. When any step
+threw, the handler's destructor deleted those packages, then `delete fVolumeState` freed them again.
+Fix: the destructor skips packages the state still owns. The thrown exception was never logged, so
+`Volume::_CommitTransaction()` now logs it (error, package, paths, strings, system error, full message)
+and first-boot processing logs its steps; the next first-boot syslog tells us which step fails.
+The "Failed to get activated packages info" lines are normal on a fresh image (no activated-packages
+file yet). QEMU note: Debian's EDK2 (`qemu-efi-riscv64`) with `-M virt,acpi=off` boots the loader
+into the kernel, but the kernel is silent on QEMU's serial; U-Boot 2025.10 S-mode crashed in the loader.
+Files: src/servers/package/CommitTransactionHandler.cpp, Volume.cpp.
