@@ -615,4 +615,6 @@ lowercase ("haiku"), but HaikuPorts' Makefiles test `ifeq ($(OS_ARCH),Haiku)`. R
 symbol '_PR_Haiku_GetLocalTimeOffset'". Fix: map `haiku*) OS_ARCH=Haiku ;;` in configure(.in).
 NSS is not affected when built with OS_ARCH=Haiku OS_TARGET=Haiku. Found 2026-11-26 by the Firefox
 library test on an Orange Pi RV; after the fix 15/16 checks pass (ffi, libevent, fontconfig/FreeType,
-HarfBuzz, cairo/pixman, VP9, NSS, dlopen). VP8 encode+decode still fails (open).
+HarfBuzz, cairo/pixman, VP9, NSS, dlopen). The VP8 failure was a test bug (packets must be drained
+after every vpx_codec_encode call; VP8 has no lag). With the bundled fonts.conf, bundle_v3 passes
+16/16 on the RV, and sans-serif resolves to Noto Sans with HarfBuzz ligatures (17 glyphs for 19 chars).
