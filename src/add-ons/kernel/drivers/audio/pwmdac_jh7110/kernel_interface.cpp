@@ -84,6 +84,52 @@ is_disabled(fdt_device_module_info* module, fdt_device* device)
 }
 
 
+/*
+ * Beacon: true on the VisionFive 2 Lite (JH7110S). Its vendor DT disables
+ * pwmdac, and GPIO33 is the on-board Wi-Fi's WL_REG_ON, not the jack's left
+ * channel: muxing PWMDAC onto GPIO33/34 there switched the AIC8800D80 off
+ * (vf2lite-13, 2026-11-26).
+ */
+static bool
+root_is_lite(device_node* node)
+{
+	device_node* root = NULL;
+	device_node* current = gDeviceManager->get_parent_node(node);
+	while (current != NULL) {
+		const char* bus;
+		if (gDeviceManager->get_attr_string(current, B_DEVICE_BUS, &bus,
+				false) != B_OK || strcmp(bus, "fdt") != 0) {
+			break;
+		}
+		if (root != NULL)
+			gDeviceManager->put_node(root);
+		root = current;
+		current = gDeviceManager->get_parent_node(current);
+	}
+	if (current != NULL)
+		gDeviceManager->put_node(current);
+	if (root == NULL)
+		return false;
+
+	bool lite = false;
+	fdt_device_module_info* module;
+	fdt_device* device;
+	if (get_fdt(root, module, device)) {
+		int length = 0;
+		const char* list = (const char*)module->get_prop(device,
+			"compatible", &length);
+		lite = list != NULL
+			&& (string_list_contains(list, length, "starfive,jh7110s")
+				|| string_list_contains(list, length,
+					"starfive,visionfive-2-lite")
+				|| string_list_contains(list, length,
+					"starfive,visionfive-2-lite-emmc"));
+	}
+	gDeviceManager->put_node(root);
+	return lite;
+}
+
+
 // #pragma mark - driver hooks
 
 
@@ -151,6 +197,7 @@ pwmdac_init_driver(device_node* node, void** cookie)
 		config.pwmdacBase = base;
 		config.dtDisabled = is_disabled(module, fdt);
 	}
+	config.noJack = root_is_lite(fdtNode);
 	gDeviceManager->put_node(fdtNode);
 	if (!ok) {
 		ERROR("no usable reg property\n");

@@ -97,6 +97,7 @@
 
 #define AIC_RAM_FMAC_FW_ADDR	0x00120000
 #define AIC_CHIP_REV_U02		3
+#define AIC_CHIP_REV_U03		7	/* also U04 (same id, Radxa aic_bsp_driver.h) */
 
 /* aic8800d80_compat.c */
 #define AIC_PATCH_MAGIC			0x48435450	/* "PTCH" */
@@ -739,8 +740,15 @@ aic_fw_init(struct aic_softc *sc)
 	rev = (word >> 16) & 0x3f;
 	printf("%s: boot ROM up, chip word 0x%08x, revision %u%s\n", AIC_NAME,
 		word, rev, ((word >> 16) & 0xc0) == 0xc0 ? " (H variant)" : "");
-	if (rev != AIC_CHIP_REV_U02) {
-		printf("%s: AIC8800D80 U02 is required\n", AIC_NAME);
+	/*
+	 * The RFC accepts U02 only. AIC's own SDIO BSP (Radxa radxa-pkg/aic8800,
+	 * aicbsp_driver_fw_init) runs U02 and U03 (id 7, shared with U04) the
+	 * same way, with the *_u02 firmware set. The VF2 Lite's module is id 7
+	 * (vf2lite-13: chip word 0xf3078820).
+	 */
+	if (rev != AIC_CHIP_REV_U02 && rev != AIC_CHIP_REV_U03) {
+		printf("%s: unsupported AIC8800D80 revision %u (U02 = 3 and "
+			"U03/U04 = 7 are known)\n", AIC_NAME, rev);
 		return ENODEV;
 	}
 	if (((word >> 16) & 0xc0) == 0xc0)

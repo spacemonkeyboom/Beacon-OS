@@ -48,3 +48,11 @@ redistribution permission (the upstream RFC says so too), so Beacon ships no
 firmware, in the repo or in public images. The driver loads it at run time
 from `/boot/system/non-packaged/data/firmware/aic8800/` (or the packaged
 `/boot/system/data/firmware/aic8800/`).
+
+## Also consulted (revision handling)
+
+radxa-pkg/aic8800 (GitHub), commit `5562c254b0231be34588dc608ec28c4f1d613285`,
+src/SDIO/driver_fw/driver/aic8800/aic8800_bsp/ (GPL-2.0): `aic_bsp_driver.c`
+`aicbsp_driver_fw_init()` and `aic_bsp_driver.h` (CHIP_REV_U03 = CHIP_REV_U04
+= 7). The D80 U03/U04 runs the same U02 path and firmware set; the
+revision check in `if_aic_sdio.c` follows that.

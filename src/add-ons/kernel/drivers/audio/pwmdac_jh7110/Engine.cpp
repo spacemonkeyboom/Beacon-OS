@@ -255,7 +255,14 @@ Jh7110AudioDevice::Init(const Jh7110AudioConfig& config)
 	}
 
 	// 3. Bring up both paths; HDMI failing leaves the jack usable.
-	status_t jackStatus = fSinks[AUDIO_OUTPUT_HEADPHONES]->Init();
+	status_t jackStatus = B_NOT_SUPPORTED;
+	if (fConfig.noJack) {
+		// Beacon: never touch GPIO33/34 here (VF2 Lite: Wi-Fi WL_REG_ON).
+		INFO("%s: VF2 Lite: no PWM-DAC jack on this board (GPIO33 is the "
+			"Wi-Fi enable); headphones output disabled, pinmux untouched\n",
+			Name());
+	} else
+		jackStatus = fSinks[AUDIO_OUTPUT_HEADPHONES]->Init();
 	status_t hdmiStatus = fSinks[AUDIO_OUTPUT_HDMI]->Init();
 	if (jackStatus != B_OK && hdmiStatus != B_OK) {
 		ERROR("%s: neither output works\n", Name());

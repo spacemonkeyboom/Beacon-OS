@@ -121,6 +121,8 @@ struct Jh7110AudioConfig {
 	phys_addr_t		pwmdacBase;
 	char			name[32];
 	bool			dtDisabled;		// pwmdac node said status = "disabled"
+	bool			noJack;			// board has no PWM-DAC jack (VF2 Lite:
+									// GPIO33 is WL_REG_ON there)
 };
 
 

@@ -11,6 +11,9 @@ One multi_audio device with two outputs and an on-the-fly selector:
           -> media_addon_server: hmulti_audio.media_addon -> mixer -> apps
        engine (Engine.cpp): timer PIO feeder, buffers, output switch
          -> Headphones: PWM-DAC 0x100b0000 -> GPIO33/34 -> 3.5 mm jack
+            (not on the VisionFive 2 Lite: no jack, GPIO33 is the Wi-Fi
+            WL_REG_ON there, so the jack output is disabled and the pinmux
+            is never touched; HDMI audio still works)
          -> HDMI: DW I2S TX0 0x120b0000 (master, S16, 2 ch) -> Inno HDMI TX
                   0x29590000 internal I2S0 input -> TV / monitor
 

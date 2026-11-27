@@ -5,8 +5,8 @@ module = AIC8800D80 (SDIO ids 0xc8a1:0x0082), on JH7110 sdio1
 (dw_mmc @0x16020000, 4-bit, WL_REG_ON = GPIO33). Licence: GPL-2.0 (port of
 the Linux aic8800 driver, see THIRD_PARTY.md).
 
-Status (2026-11-26): **milestone 1 ("fw up") written, compiles, not yet run
-on hardware.** Scan (milestone 2) and WPA2 join (milestone 3) are not
+Status (2026-11-26): **milestone 1 ("fw up") in hardware test** (chip revisions U02 = 3 and U03/U04 = 7;
+the VF2 Lite has 7). Scan (milestone 2) and WPA2 join (milestone 3) are not
 written yet.
 
 ## Firmware (not shipped)

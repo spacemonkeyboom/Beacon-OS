@@ -736,3 +736,22 @@ silent, it calls reset_card (WL_REG_ON power cycle plus re-enumeration, CMD5 fir
 tries again, up to two times. dw_mmc PowerCycle() now logs the reset GPIO, the Lite sdio1 pin mux
 and the controller state before cycling, and refills the command trace budget to 24, so the next
 log shows why the card went quiet and how it came back.
+
+**vf2lite-13 result (2026-11-26): root cause found. jh7110_audio was taking over WL_REG_ON (confirmed on hardware).**
+- On the VF2 Lite, GPIO33 is the AIC8800D80's WL_REG_ON. The PWM-DAC audio driver muxes GPIO33/34 to
+  PWMDAC left/right for the 3.5 mm jack, as on the VF2 and the Orange Pi RV.
+- The log showed it: "pinmux GPIO33/34 -> PWMDAC left/right". The new PowerCycle dump then read
+  "GPIO33 (SDIO reset): DOUT 28 = peripheral signal 28", which is PWMDAC_LEFT. The PWM signal on
+  the enable pin switched the chip off.
+- The aic8800 power cycle took the pin back and the card answered again (CCCR 0x43). So the
+  recovery works.
+- Fix in the audio driver (src/add-ons/kernel/drivers/audio/pwmdac_jh7110): on the Lite (root
+  compatible starfive,jh7110s / visionfive-2-lite*) it no longer brings up the jack sink and never
+  writes the GPIO33/34 mux. The Lite's vendor DT disables pwmdac, pwmdac_codec and sound3, so the
+  board has no PWM-DAC jack. HDMI audio is unchanged, and so are the VF2 and the RV.
+  Lesson for other ports: on a board-specific pin like this, follow that board's DT, not the SoC's
+  common pin groups.
+- Chip revision: the Lite's D80 reports chip word 0xf3078820, revision 7 (U03; AIC uses the same id
+  for U04). The upstream RFC accepts U02 only. AIC's own SDIO BSP (radxa-pkg/aic8800
+  aicbsp_driver_fw_init) runs U02 and U03 the same way with the *_u02 firmware, so aic8800 now
+  accepts 3 and 7 (pending).
