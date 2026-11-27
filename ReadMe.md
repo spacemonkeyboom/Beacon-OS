@@ -100,7 +100,7 @@ each board's own U-Boot; nothing on the board is changed.
 | HDMI desktop | Works | Works | Works (1920x1080) |
 | USB keyboard, mouse | Works (new Cadence USB 3 driver) | Works (VL805 over PCIe) | Works (VL805 over PCIe, hot-plug) |
 | **Wi-Fi** | **Works (0.5):** built-in AIC8800D80, new `aic8800` driver; scan, WPA2, DHCP, reconnects after a power cycle | No built-in Wi-Fi | Works: AP6256 (BCM43456), scan, WPA/WPA2, DHCP |
-| **Audio** | **Works (0.5): HDMI** (the Lite has no headphone jack) | HDMI and 3.5 mm jack | 3.5 mm jack and HDMI, switchable while playing (`audio_output`) |
+| **Audio** | **Works (0.5): HDMI** (the Lite has no headphone jack) | HDMI works; 3.5 mm jack not tested yet | 3.5 mm jack and HDMI, switchable while playing (`audio_output`) |
 | Wired Ethernet | In the image, not tested yet | In the image, not tested yet | In the image (please report results) |
 | Web browser: WebPositive (HTTPS) | Works | Works | Works |
 | Restart from the menu | Doesn't reset the board yet: power off and on | Not tested | Doesn't reset the board yet: power off and on |
